@@ -1,0 +1,12 @@
+#!/bin/bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+RESOURCES="$(cd "$(dirname "$0")/../Resources" && pwd)"
+LOG_DIR="$HOME/Library/Logs"
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/ClearSilence.log"
+cd "$RESOURCES" || exit 1
+if ! command -v python3 >/dev/null 2>&1; then
+  /usr/bin/osascript -e 'display dialog "Clear Silence: требуется Python 3. Проверь установку Python 3 и попробуй 02_START.command." buttons {"OK"} default button 1' >/dev/null 2>&1
+  exit 1
+fi
+exec python3 "$RESOURCES/app.py" >> "$LOG" 2>&1
