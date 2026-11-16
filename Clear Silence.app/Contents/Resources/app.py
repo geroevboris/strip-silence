@@ -8,7 +8,6 @@ import sys
 import threading
 import time
 import uuid
-import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from audio import WavFile
@@ -19,6 +18,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
+APP_VERSION = '0.3.0'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -49,6 +49,16 @@ def bridge(action, **args):
     if not result.get('ok'):
         raise RuntimeError(result.get('error', 'Unknown Live error'))
     return result
+
+
+def require_replace_bridge():
+    """Fail BEFORE creating files or editing Live when the installed script is old."""
+    status = bridge('status')
+    if status.get('protocol') != 2 or 'replace' not in status.get('actions', []):
+        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Запусти 01_INSTALL.command из v0.3, полностью закрой Ableton и открой снова. Текущий мост: %s, нужен v0.3.' % status.get('version', 'неизвестен'))
+    if not status.get('can_replace', False):
+        raise RuntimeError('Live не предоставил безопасные операции Undo. Замена отключена, оригиналы не изменены.')
+    return status
 
 
 def get_clip(data, ti, ci):
@@ -100,6 +110,40 @@ def analyze(req):
             'source_sec': round(duration, 2),
             'positions': [round((a/wav.rate-file_offset), 3) for a,b in segments[:12]],
             'format': '%s Hz, %s channels, %s-bit %s' % (wav.rate, wav.channels, wav.bits, 'float' if wav.tag == 3 else 'PCM')}
+
+
+def visualize_clip(req):
+    """Read-only, exact kept/removed ranges plus approximate overview waveform."""
+    ti = int(req['track_index']); ci = int(req['clip_index'])
+    threshold = float(req.get('threshold', -45))
+    min_ms = int(req.get('min_silence_ms', 150))
+    padding = int(req.get('padding_ms', 30))
+    if not (-90 <= threshold <= -1 and 30 <= min_ms <= 5000 and 0 <= padding <= 1000):
+        raise ValueError('Параметры вне допустимого диапазона')
+    listing = bridge('list')
+    clip = get_clip(listing, ti, ci)
+    if 'error' in clip:
+        raise ValueError(clip['error'])
+    if clip['warping'] or clip['looping']:
+        raise ValueError('Предпросмотр пока доступен только для клипов без Warp и Loop')
+    if clip['has_envelopes'] or clip.get('has_groove') or clip['pitch_coarse'] or clip['pitch_fine']:
+        raise ValueError('В клипе есть автоматизация, Groove или транспонирование')
+    tempo = float(listing['tempo'])
+    duration = (clip['end'] - clip['start']) * 60 / tempo
+    if duration <= 0 or abs((clip['file_end'] - clip['file_offset']) - duration) > .09:
+        raise ValueError('Нестандартная длительность или смещение клипа; предпросмотр недоступен')
+    wav = WavFile(clip['file_path'])
+    segments = wav.detect(clip['file_offset'], duration, threshold, min_ms, padding)
+    active = []
+    for a,b in segments:
+        active.append([round(max(0., a / wav.rate - clip['file_offset']), 5),
+                       round(min(duration, b / wav.rate - clip['file_offset']), 5)])
+    kept = sum(b-a for a,b in segments) / wav.rate
+    return {'ok': True, 'track': clip['name'], 'duration': round(duration, 5),
+            'waveform': wav.envelope(clip['file_offset'], duration, 550),
+            'kept_ranges': active, 'kept_seconds': round(kept, 3),
+            'removed_seconds': round(max(0, duration-kept), 3),
+            'fragments': len(active)}
 
 
 def create_preview(req):
@@ -212,6 +256,7 @@ def _batch_worker(job_id, plan):
     errors=[]
     output_dir=os.path.join(OUTPUT_ROOT, time.strftime('%Y%m%d-%H%M%S')+'-'+secrets.token_hex(4))
     try:
+        require_replace_bridge()
         os.makedirs(output_dir, exist_ok=False)
         for k, e in enumerate(entries):
             with lock:
@@ -250,6 +295,7 @@ def _batch_worker(job_id, plan):
 
 
 def start_batch(req):
+    require_replace_bridge()
     pid=req.get('plan_id')
     with lock:
         plan=batch_plans.pop(pid,None)
@@ -332,7 +378,9 @@ class Handler(BaseHTTPRequestHandler):
             if n <= 0 or n > 10000:
                 raise ValueError('Invalid request size')
             data = json.loads(self.rfile.read(n))
-            if self.path == '/api/batch/analyze':
+            if self.path == '/api/clip/visualize':
+                result = visualize_clip(data)
+            elif self.path == '/api/batch/analyze':
                 result = plan_batch(data)
             elif self.path == '/api/batch/start':
                 result = start_batch(data)
@@ -357,13 +405,32 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    print('Clear Silence v0.2 UI: http://127.0.0.1:%d' % WEB_PORT)
-    print('Close this terminal to stop the interface. No internet access is used.')
-    httpd = ThreadingHTTPServer(('127.0.0.1', WEB_PORT), Handler)
-    threading.Timer(0.6, lambda: webbrowser.open('http://127.0.0.1:%d' % WEB_PORT)).start()
+    # The window is deliberately NOT a regular browser tab. Cocoa/WebKit is
+    # hosted in its own macOS application window via pywebview.
+    if sys.platform != 'darwin':
+        raise SystemExit('This packaged application currently supports macOS only.')
     try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
+        import webview
+    except ImportError as e:
+        raise SystemExit('Нужен pywebview для отдельного окна. Один раз запусти 03_SETUP_UI.command из папки Clear Silence. (%s)' % e)
+    try:
+        httpd = ThreadingHTTPServer(('127.0.0.1', WEB_PORT), Handler)
+    except OSError as e:
+        raise SystemExit('Не удалось открыть интерфейс на порту %d: %s. Закрой прежнюю версию Clear Silence.' % (WEB_PORT, e))
+
+    class NativeWindowApi:
+        def close(self):
+            # Called from pywebview JS bridge; never block the UI thread.
+            threading.Thread(target=window.destroy, daemon=True).start()
+            return True
+
+    t = threading.Thread(target=httpd.serve_forever, daemon=True, name='ClearSilenceUI')
+    t.start()
+    try:
+        window = webview.create_window('Clear Silence', 'http://127.0.0.1:%d' % WEB_PORT,
+                                       width=1180, height=860, min_size=(870, 620),
+                                       js_api=NativeWindowApi())
+        webview.start(gui='cocoa', debug=False)
     finally:
+        httpd.shutdown()
         httpd.server_close()

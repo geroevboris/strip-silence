@@ -129,6 +129,37 @@ class WavFile:
                 padded.append((left, right))
         return padded
 
+    def envelope(self, start_seconds, duration_seconds, bins=550):
+        """Fast approximate peak overview for the UI; NOT used for cutting audio.
+
+        Actual kept ranges always come from detect(), which scans the audio.
+        Bounded sampling here avoids reading a large WAV twice on every slider move.
+        """
+        if not 64 <= bins <= 1024:
+            raise ValueError('Invalid waveform resolution')
+        start = round(start_seconds * self.rate)
+        end = round((start_seconds + duration_seconds) * self.rate)
+        if end > self.frames and end - self.frames <= 2:
+            end = self.frames
+        if start < 0 or end <= start or end > self.frames:
+            raise ValueError('Waveform range outside source WAV')
+        width = end - start
+        result = []
+        with open(self.path, 'rb') as file:
+            for index in range(bins):
+                a = start + width * index // bins
+                b = max(a+1, start + width * (index+1) // bins)
+                span = b-a
+                probe_size = max(1, min(192, span))
+                best = 0.
+                # Sample three positions per horizontal pixel, with bounded IO.
+                for ratio in (0., .4, .8):
+                    sample_at = a + int(max(0, span-probe_size) * ratio)
+                    file.seek(self.data_offset + sample_at * self.align)
+                    best = max(best, self._max_norm(file.read(probe_size * self.align)))
+                result.append(round(min(1.0, best), 5))
+        return result
+
     def write_slice(self, left_frame, right_frame, output_path):
         if not (0 <= left_frame < right_frame <= self.frames):
             raise ValueError('Invalid frame range')

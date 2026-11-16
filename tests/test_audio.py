@@ -56,3 +56,21 @@ class TestAudio(unittest.TestCase):
             with self.assertRaises(ValueError): wav.detect(.95,.3,-30,150,0)
 
 if __name__=='__main__':unittest.main()
+
+
+class TestWaveformUI(unittest.TestCase):
+    def test_waveform_has_bounded_samples(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'sample.wav')
+            rate = 24000
+            with wave.open(path, 'wb') as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(rate)
+                samples = [18000 if rate // 2 <= i < rate else 0 for i in range(rate * 2)]
+                w.writeframes(struct.pack('<%dh' % len(samples), *samples))
+            result = WavFile(path).envelope(0, 2, 256)
+            self.assertEqual(len(result), 256)
+            self.assertAlmostEqual(max(result[:50]), 0.)
+            self.assertGreater(max(result[80:120]), .4)
+            self.assertAlmostEqual(max(result[160:]), 0.)

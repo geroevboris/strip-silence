@@ -1,4 +1,4 @@
-# Clear Silence Bridge v0.1 - Ableton Live 12 Python Remote Script.
+# Clear Silence Bridge v0.3 - Ableton Live 12 Python Remote Script.
 # All Live API calls run on the Live main thread via update_display().
 from __future__ import absolute_import, print_function
 import os
@@ -13,7 +13,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.1.0'
+VERSION = '0.3.0'
 
 
 def create_instance(c_instance):
@@ -126,7 +126,8 @@ class ClearSilenceBridge(ControlSurface):
         song = self.song()
         if action == 'status':
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': len(song.tracks),
-                    'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo'))}
+                    'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo')),
+                    'protocol': 2, 'actions': ['status', 'list', 'preview', 'replace']}
         if action == 'list':
             tracks = []
             for ti, track in enumerate(song.tracks):

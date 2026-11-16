@@ -1,12 +1,16 @@
 #!/bin/bash
 HERE="$(cd "$(dirname "$0")" && pwd)"
-cd "$HERE"
-if ! command -v python3 >/dev/null; then
-  echo "Требуется установленный Python 3 (для интерфейса и WAV-анализа)."
-  read -p "Нажми Enter..."
+PYTHON="$HOME/Library/Application Support/ClearSilence/ui-venv/bin/python3"
+if [ ! -x "$PYTHON" ]; then
+  echo 'Не установлены компоненты отдельного окна. Один раз запусти 03_SETUP_UI.command.'
+  read -r -p 'Enter для закрытия… ' _
   exit 1
 fi
-python3 "$HERE/app.py"
+cd "$HERE" || exit 1
+"$PYTHON" "$HERE/app.py"
 status=$?
-echo "Приложение завершилось с кодом $status"
-read -p "Нажми Enter..."
+if [ "$status" -ne 0 ]; then
+  echo "Clear Silence завершился с ошибкой: $status"
+  read -r -p 'Enter для закрытия… ' _
+fi
+exit "$status"

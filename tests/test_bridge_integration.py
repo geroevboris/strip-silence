@@ -68,10 +68,13 @@ class TestBridge(unittest.TestCase):
                 results=[]
                 def client_fn():
                     try:
-                        st=app.bridge('status');assert st['tracks']==1
+                        st=app.bridge('status');assert st['tracks']==1 and st['protocol']==2 and 'replace' in st['actions']
                         tracks=app.bridge('list');assert tracks['tracks'][0]['clips'][0]['name']=='Test'
                         plan=app.analyze({'track_index':0,'clip_index':0,'threshold':-40,'min_silence_ms':200,'padding_ms':20})
                         assert plan['segments']==2, plan
+                        visual=app.visualize_clip({'track_index':0,'clip_index':0,'threshold':-40,'min_silence_ms':200,'padding_ms':20})
+                        assert visual['fragments']==2 and len(visual['waveform'])==550, visual
+                        assert visual['removed_seconds']>0.3, visual
                         result=app.create_preview({'plan_id':plan['plan_id']})
                         assert result['created']==2, result
                         results.append('OK')
@@ -165,6 +168,21 @@ class TestBatch(unittest.TestCase):
                 bridge_mod.TOKEN_FILE=old_bridge_token
                 if old_home is None: os.environ.pop('HOME',None)
                 else: os.environ['HOME']=old_home
+
+    def test_old_bridge_rejected_before_changes(self):
+        from unittest.mock import patch
+        sentinel={'created':time.time(),'entries':[{'name':'anything'}], 'allow_empty':False}
+        app.batch_plans['test_old'] = sentinel
+        def old_bridge(action, **kwargs):
+            if action=='status': return {'ok':True, 'version':'0.1.0', 'can_replace':True}
+            return {'ok':False, 'error':'Unknown action'}
+        try:
+            with patch.object(app,'bridge',old_bridge):
+                with self.assertRaisesRegex(RuntimeError,'старый ClearSilenceBridge'):
+                    app.start_batch({'plan_id':'test_old'})
+            self.assertIs(app.batch_plans['test_old'],sentinel)
+        finally:
+            app.batch_plans.pop('test_old',None)
 
     def test_replace_multiple_clips_in_place(self):
         self._run_case(False)
