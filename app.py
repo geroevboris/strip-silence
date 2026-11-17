@@ -19,7 +19,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.5.1'
+APP_VERSION = '0.5.2'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -55,7 +55,7 @@ def bridge(action, **args):
 def require_replace_bridge():
     """Fail BEFORE creating files or editing Live when the installed script is old."""
     status = bridge('status')
-    if status.get('protocol') != 4 or 'split_mute' not in status.get('actions', []):
+    if status.get('protocol') != 5 or 'split_mute' not in status.get('actions', []):
         raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.5.1.' % status.get('version', 'неизвестен'))
     if not status.get('can_replace', False):
         raise RuntimeError('Live не предоставил безопасные операции Undo. Разделение клипов отключено.')
@@ -371,6 +371,7 @@ def _batch_worker(job_id, plan):
 
 
 def start_batch(req):
+    raise RuntimeError('Пакетная обработка отключена до подтверждения точной длины регионов в Live. Проект не менялся.')
     require_replace_bridge()
     pid=req.get('plan_id')
     with lock:
@@ -454,6 +455,8 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(n))
             if self.path == '/api/clip/profile':
                 result = clip_profile(data)
+            elif self.path == '/api/region/probe':
+                result = bridge('probe_region', track_index=int(data['track_index']), clip_index=int(data['clip_index']))
             elif self.path == '/api/clip/visualize':
                 result = visualize_clip(data)
             elif self.path == '/api/batch/analyze':
