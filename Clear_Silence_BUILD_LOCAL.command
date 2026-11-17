@@ -95,7 +95,13 @@ cd "$PROJECT"
 echo 'Запускаю тесты и нативную упаковку macOS…'
 bash packaging/build_installer.sh
 
-PKG="$(find "$PROJECT/package-output" -maxdepth 1 -type f -name 'Clear_Silence_*_macOS_Apple_Silicon.pkg' -print -quit)"
+PKG=""
+for candidate in "$PROJECT"/package-output/Clear_Silence_*_macOS_Apple_Silicon.pkg; do
+  if [ -f "$candidate" ]; then
+    PKG="$candidate"
+    break
+  fi
+done
 if [ -z "$PKG" ] || [ ! -s "$PKG" ]; then
   echo 'В package-output нет готового PKG.' >&2
   exit 1
