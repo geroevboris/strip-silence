@@ -1,0 +1,55 @@
+name: Build Clear Silence macOS installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packaging/**'
+      - '.github/workflows/build-installer.yml'
+      - 'app.py'
+      - 'audio.py'
+      - 'ui.html'
+      - 'ClearSilenceBridge/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  pkg-arm64:
+    runs-on: macos-15-arm64
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install packaging requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'pyinstaller>=6.10,<7' 'pywebview>=5,<7' 'pyobjc-framework-WebKit>=10,<13'
+      - name: Build native app and PKG
+        run: bash packaging/build_installer.sh
+      - name: Upload PKG to workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clear-Silence-v0.3.1-macOS-Apple-Silicon
+          path: |
+            package-output/*.pkg
+            package-output/*.sha256
+          if-no-files-found: error
+      - name: Publish downloadable installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG='v0.3.1-installer'
+          PKG='package-output/Clear_Silence_0.3.1_macOS_Apple_Silicon.pkg'
+          SUM="${PKG}.sha256"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$PKG" "$SUM" --clobber
+          else
+            gh release create "$TAG" "$PKG" "$SUM" \
+              --target "$GITHUB_SHA" \
+              --title 'Clear Silence v0.3.1 — macOS installer' \
+              --notes 'Experimental Apple Silicon PKG installer. Installs /Applications/Clear Silence.app and the ClearSilenceBridge Remote Script for the signed-in macOS user. Restart Ableton Live; select ClearSilenceBridge as Control Surface. Unsigned/not notarized: macOS may require an explicit Open approval. Test on a copy of your Ableton project.'
+          fi
