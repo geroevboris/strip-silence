@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   pkg-arm64:
-    runs-on: macos-15
+    runs-on: macos-15-arm64
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +33,7 @@ jobs:
       - name: Upload PKG to workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Clear-Silence-v0.3.1-macOS-Apple-Silicon
+          name: Clear-Silence-v0.3.2-macOS-Apple-Silicon
           path: |
             package-output/*.pkg
             package-output/*.sha256
@@ -42,18 +42,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG='v0.3.1-installer'
-          PKG='package-output/Clear_Silence_0.3.1_macOS_Apple_Silicon.pkg'
+          TAG='v0.3.2-installer'
+          PKG='package-output/Clear_Silence_0.3.2_macOS_Apple_Silicon.pkg'
           SUM="${PKG}.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$PKG" "$SUM" --clobber
           else
             gh release create "$TAG" "$PKG" "$SUM" \
               --target "$GITHUB_SHA" \
-              --title 'Clear Silence v0.3.1 — macOS installer' \
-              --notes 'Experimental Apple Silicon PKG installer. Installs /Applications/Clear Silence.app and the ClearSilenceBridge Remote Script for the signed-in macOS user. Restart Ableton Live; select ClearSilenceBridge as Control Surface. Unsigned/not notarized: macOS may require an explicit Open approval. Test on a copy of your Ableton project.'
+              --title 'Clear Silence v0.3.2 — macOS installer' \
+              --notes 'Experimental Apple Silicon PKG installer. Installs /Applications/Clear Silence.app without writing into ~/Music during package installation. On first app launch ClearSilenceBridge is installed for the signed-in user. Then restart Ableton Live; select ClearSilenceBridge as Control Surface. Unsigned/not notarized: macOS may require an explicit Open approval. Test on a copy of your Ableton project.'
           fi
-
       - name: Record result in repository
         if: always()
         env:
@@ -66,7 +65,7 @@ jobs:
             echo "Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo "Commit: ${GITHUB_SHA}"
             if [ "$BUILD_STATUS" = 'success' ]; then
-              echo 'Release: https://github.com/geroevboris/strip-silence/releases/tag/v0.3.1-installer'
+              echo 'Release: https://github.com/geroevboris/strip-silence/releases/tag/v0.3.2-installer'
             fi
           } > INSTALLER_BUILD_STATUS.md
           git config user.name 'github-actions[bot]'

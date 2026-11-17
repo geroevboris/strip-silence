@@ -2,13 +2,13 @@
 # Build a fully self-contained macOS Apple Silicon app and its native .pkg.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VERSION=0.3.1
+VERSION=0.3.2
 OUTPUT_DIR="$PWD/package-output"
 ROOT="$PWD/package-build/root"
-SCRIPTS="$PWD/package-build/scripts"
 APPNAME='Clear Silence.app'
 
 python3 -m unittest discover -s tests -v
+PYTHONPATH=packaging python3 -m unittest discover -s packaging/tests -v
 python3 -m PyInstaller --noconfirm --clean --windowed --onedir \
   --name 'Clear Silence' \
   --osx-bundle-identifier 'local.clearsilence.app' \
@@ -31,8 +31,8 @@ p=sys.argv[1]
 with open(p,'rb') as f: d=plistlib.load(f)
 d['CFBundleDisplayName']='Clear Silence'
 d['CFBundleName']='Clear Silence'
-d['CFBundleShortVersionString']='0.3.1'
-d['CFBundleVersion']='0.3.1'
+d['CFBundleShortVersionString']='0.3.2'
+d['CFBundleVersion']='0.3.2'
 d['LSMinimumSystemVersion']='11.0'
 with open(p,'wb') as f: plistlib.dump(d,f)
 PY
@@ -46,13 +46,11 @@ codesign --verify --deep "$APP"
 # are present in the self-contained executable.
 "$APP/Contents/MacOS/Clear Silence" --self-test
 
-rm -rf "$ROOT" "$SCRIPTS"
-mkdir -p "$ROOT/Applications" "$SCRIPTS" "$OUTPUT_DIR"
+rm -rf "$ROOT"
+mkdir -p "$ROOT/Applications" "$OUTPUT_DIR"
 ditto "$APP" "$ROOT/Applications/$APPNAME"
-cp packaging/postinstall "$SCRIPTS/postinstall"
-chmod 0755 "$SCRIPTS/postinstall"
 PKG="$OUTPUT_DIR/Clear_Silence_${VERSION}_macOS_Apple_Silicon.pkg"
-pkgbuild --root "$ROOT" --scripts "$SCRIPTS" \
+pkgbuild --root "$ROOT" \
   --identifier 'local.clearsilence.installer' \
   --version "$VERSION" \
   --install-location / \
@@ -60,7 +58,7 @@ pkgbuild --root "$ROOT" --scripts "$SCRIPTS" \
 # Confirm metadata and verify that the installer can be expanded on macOS.
 pkgutil --expand "$PKG" "$OUTPUT_DIR/expanded"
 test -f "$OUTPUT_DIR/expanded/PackageInfo"
-test -f "$OUTPUT_DIR/expanded/Scripts" || test -d "$OUTPUT_DIR/expanded/Scripts"
+test ! -e "$OUTPUT_DIR/expanded/Scripts" # no privileged user-folder modification
 rm -rf "$OUTPUT_DIR/expanded"
 shasum -a 256 "$PKG" > "$PKG.sha256"
 echo "BUILT: $PKG"
