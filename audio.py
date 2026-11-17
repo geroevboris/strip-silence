@@ -82,6 +82,28 @@ class WavFile:
                     peak = v
         return peak / scale
 
+    def peak_windows(self, start_seconds, duration_seconds):
+        """One 10 ms peak profile, reused by the slider for instant preview.
+
+        Mirrors the exact signal measurement of detect(), minus thresholding.
+        """
+        start = round(start_seconds * self.rate)
+        end = round((start_seconds + duration_seconds) * self.rate)
+        if end > self.frames and end - self.frames <= 2:
+            end = self.frames
+        if start < 0 or end <= start or end > self.frames:
+            raise ValueError('Clip file range is outside WAV sample content')
+        hop = max(1, round(self.rate * .01))
+        peaks = []
+        with open(self.path, 'rb') as f:
+            f.seek(self.data_offset + start * self.align)
+            pos = start
+            while pos < end:
+                frames = min(hop, end-pos)
+                peaks.append(round(self._max_norm(f.read(frames*self.align)), 7))
+                pos += frames
+        return peaks, hop, start, end
+
     def detect(self, start_seconds, duration_seconds, threshold_db=-45.0, min_silence_ms=150, padding_ms=30):
         if not (-90 <= threshold_db <= -1):
             raise ValueError('Threshold must be -90 to -1 dBFS')

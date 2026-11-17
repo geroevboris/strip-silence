@@ -8,6 +8,7 @@ on:
       - '.github/workflows/build-installer.yml'
       - 'app.py'
       - 'audio.py'
+      - 'silence_math.py'
       - 'ui.html'
       - 'ClearSilenceBridge/**'
       - 'tests/**'
@@ -34,7 +35,7 @@ jobs:
       - name: Upload PKG to workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Clear-Silence-v0.4.0-macOS-Apple-Silicon
+          name: Clear-Silence-v0.5.0-beta-macOS-Apple-Silicon
           path: |
             package-output/*.pkg
             package-output/*.sha256
@@ -43,14 +44,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG='v0.4.0-installer'
-          PKG='package-output/Clear_Silence_0.4.0_macOS_Apple_Silicon.pkg'
+          TAG='v0.5.0-beta'
+          PKG='package-output/Clear_Silence_0.5.0_macOS_Apple_Silicon.pkg'
           SUM="${PKG}.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$PKG" "$SUM" --clobber
           else
             gh release create "$TAG" "$PKG" "$SUM" \
               --target "$GITHUB_SHA" \
-              --title 'Clear Silence v0.4.0 — Compact UI' \
-              --notes 'Compact macOS interface, auto-selected audio track, all/custom track modes, preview, new waveform icon. No change to the WAV slicing algorithm. The app updates ClearSilenceBridge on first launch; restart Live after that update. Unsigned and unnotarized; use on a copy of the Live Set.'
+              --title 'Clear Silence v0.5.0 beta — Mute, not delete' \
+              --notes 'Experimental non-destructive segmentation using full original audio files. Detected silent regions are retained and muted. One strength control with immediate cyan/pink preview. Requires an empty Session slot on each processed track. Live API behavior is not yet verified on the target Mac. NEVER use on the only copy of a Live Set. Original WAVs are not altered. Unsigned and unnotarized.'
           fi

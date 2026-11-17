@@ -13,7 +13,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.4.0'
+VERSION = '0.5.0'
 
 
 def create_instance(c_instance):
@@ -127,7 +127,7 @@ class ClearSilenceBridge(ControlSurface):
         if action == 'status':
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': len(song.tracks),
                     'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo')),
-                    'protocol': 2, 'actions': ['status', 'list', 'preview', 'replace']}
+                    'protocol': 3, 'actions': ['status', 'list', 'preview', 'split_mute']}
         if action == 'list':
             tracks = []
             for ti, track in enumerate(song.tracks):
@@ -156,16 +156,18 @@ class ClearSilenceBridge(ControlSurface):
                         clips.append({'index': ci, 'name': str(clip.name), 'error': str(e)})
                 if clips:
                     tracks.append({'index': ti, 'name': str(track.name), 'clips': clips})
-            # Report actual Live selection independently of tracks with clips.
+            selected = None
             try:
-                chosen = song.view.selected_track
-                selected_index = next((i for i, t in enumerate(song.tracks) if t == chosen), None)
-            except (AttributeError, RuntimeError):
-                selected_index = None
+                selected_track = song.view.selected_track
+                selected = next((i for i,tr in enumerate(song.tracks) if tr == selected_track), None)
+            except Exception:
+                pass
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo),
-                    'tracks': tracks, 'selected_track_index': selected_index}
+                    'selected_track_index':selected, 'tracks': tracks}
+        if action == 'split_mute':
+            return self._split_mute(song, req)
         if action == 'replace':
-            return self._replace(song, req)
+            raise RuntimeError('Старый режим с удалением клипов отключён. Обнови Clear Silence.')
         if action == 'preview':
             if song.is_playing or song.record_mode:
                 raise RuntimeError('Stop playback and recording before creating preview')
@@ -232,6 +234,174 @@ class ClearSilenceBridge(ControlSurface):
                 raise
             return {'ok': True, 'created': count, 'track_name': str(new_track.name), 'muted': True}
         return {'ok': False, 'error': 'Unknown action'}
+
+    def _split_mute(self, song, req):
+        """Rebuild a clip as source-referencing regions, muting only the gaps.
+
+        Unlike the old WAV slice method, every new region references the FULL
+        original WAV. Editing/unmuting/revealing source material is possible.
+        Do not run against anything but a copy of the Live Set until verified.
+        """
+        if song.is_playing or song.record_mode:
+            raise RuntimeError('Останови воспроизведение и запись перед обработкой.')
+        for attr in ('begin_undo_step','end_undo_step','undo'):
+            if not callable(getattr(song,attr,None)):
+                raise RuntimeError('Не поддерживается Song.%s (нужен откат Undo).' % attr)
+        ti = int(req['track_index'])
+        if ti < 0 or ti >= len(song.tracks):
+            raise RuntimeError('Дорожка изменила положение. Повтори анализ.')
+        track = song.tracks[ti]
+        source = req['source']
+        if str(track.name) != str(req['track_name']):
+            raise RuntimeError('Дорожка изменилась. Повтори анализ.')
+        if not bool(track.has_audio_input) or bool(track.is_frozen):
+            raise RuntimeError('Доступна только незамороженная аудиодорожка.')
+        if not callable(getattr(track,'duplicate_clip_to_arrangement',None)):
+            raise RuntimeError('Отсутствует дублирование клипа из Session в Arrangement.')
+        if abs(float(song.tempo)-float(req['tempo'])) > 0.00001:
+            raise RuntimeError('Темп изменился. Повтори анализ.')
+        matches=[]
+        for candidate in list(track.arrangement_clips):
+            if not candidate.is_audio_clip:
+                continue
+            try:
+                same=(str(candidate.file_path)==str(source['file_path'])
+                      and str(candidate.name)==str(source['name'])
+                      and abs(float(candidate.start_time)-float(source['start']))<0.0001
+                      and abs(float(candidate.end_time)-float(source['end']))<0.0001
+                      and abs(float(candidate.loop_start)-float(source['file_offset']))<0.0001
+                      and abs(float(candidate.loop_end)-float(source['file_end']))<0.0001
+                      and abs(float(candidate.gain)-float(source['gain']))<0.0001
+                      and bool(candidate.muted)==bool(source['muted'])
+                      and not candidate.warping and not candidate.looping
+                      and not bool(getattr(candidate,'has_envelopes',False))
+                      and not bool(getattr(candidate,'has_groove',False)))
+                if same:
+                    matches.append(candidate)
+            except Exception:
+                continue
+        if len(matches)!=1:
+            raise RuntimeError('Исходный клип изменён или не найден однозначно (%d).' % len(matches))
+        original=matches[0]
+        regions=req.get('regions',[])
+        if not isinstance(regions,list) or not 1 <= len(regions) <= 150:
+            raise RuntimeError('Некорректное количество регионов.')
+        if bool(original.muted):
+            raise RuntimeError('Клип уже заглушён — пропускаю.')
+        reference=float(source['file_offset'])
+        last_file=reference
+        last_beat=float(source['start'])
+        for region in regions:
+            a,b=float(region['file_start']),float(region['file_end'])
+            st,ed=float(region['time']),float(region['end'])
+            if (abs(a-last_file)>.00008 or b<=a or ed<=st
+                    or abs(st-last_beat)>.0001 or st < -0.0001):
+                raise RuntimeError('Границы регионов содержат разрыв или наложение.')
+            expected= float(source['start'])+(a-reference)*float(req['tempo'])/60
+            if abs(st-expected)>.002 or abs(ed-st-(b-a)*float(req['tempo'])/60)>.002:
+                raise RuntimeError('Несовпадение времени между оригиналом и регионами.')
+            last_file,last_beat=b,ed
+        if abs(last_file-float(source['file_end']))>.00008 or abs(last_beat-float(source['end']))>.003:
+            raise RuntimeError('Регионы не покрывают весь исходный клип.')
+        if len(regions)==1 and not bool(regions[0]['muted']):
+            return {'ok':True,'created':0,'muted':0,'unchanged':True}
+
+        # Only full-source clips are used. No trimmed/new WAV file is generated.
+        # If no sound survived the threshold, simply deactivate the same clip.
+        if len(regions)==1 and bool(regions[0]['muted']):
+            song.begin_undo_step()
+            try:
+                original.muted=True
+            finally:
+                song.end_undo_step()
+            return {'ok':True,'created':1,'muted':1}
+
+        slot=None
+        for candidate in track.clip_slots:
+            if not bool(candidate.has_clip) and callable(getattr(candidate,'create_audio_clip',None)):
+                slot=candidate
+                break
+        if slot is None:
+            raise RuntimeError('Нужен хотя бы один пустой слот Session View на этой дорожке.')
+
+        source_path=str(source['file_path'])
+        if not os.path.isfile(source_path):
+            raise RuntimeError('Исходный WAV недоступен: '+source_path)
+        song.begin_undo_step()
+        error=None
+        did_change=False
+        count=0
+        muted_count=0
+        try:
+            slot.create_audio_clip(source_path)
+            session=slot.clip
+            session.warping=False
+            session.looping=False
+            # Ensure the source remains full length and can later be revealed
+            # by dragging clip boundaries. Never call crop()/write_slice().
+            if str(session.file_path)!=source_path:
+                raise RuntimeError('Session clip references the wrong source WAV.')
+            track.delete_clip(original)
+            did_change=True
+            for region in regions:
+                a,b=float(region['file_start']),float(region['file_end'])
+                st,ed=float(region['time']),float(region['end'])
+                # Setting loop_end BEFORE loop_start prevents invalid ranges.
+                session.loop_end=b
+                session.loop_start=a
+                if abs(float(session.loop_start)-a)>.002 or abs(float(session.loop_end)-b)>.002:
+                    raise RuntimeError('Live не установил границы фрагмента в Session.')
+                session.muted=bool(region['muted'])
+                track.duplicate_clip_to_arrangement(session,st)
+                found=[]
+                for c in list(track.arrangement_clips):
+                    try:
+                        if (c.is_audio_clip and str(c.file_path)==source_path
+                            and abs(float(c.start_time)-st)<.003):
+                            found.append(c)
+                    except Exception:
+                        pass
+                if len(found)!=1:
+                    raise RuntimeError('Live не создал однозначный регион: %.4f' % st)
+                new=found[0]
+                if abs(float(new.end_time)-ed)>.02:
+                    raise RuntimeError('Нарушена длительность региона: %.4f vs %.4f' %
+                                       (float(new.end_time),ed))
+                if new.warping:
+                    raise RuntimeError('Live автоматически включил Warp; остановлено.')
+                new.muted=bool(region['muted'])
+                new.name=str(source['name'])[:120]
+                new.gain=float(source['gain'])
+                try:
+                    new.color=int(source['color'])
+                except Exception:
+                    pass
+                count+=1
+                if new.muted:
+                    muted_count+=1
+            # Temporary Session clip is removed; no new scene or track added.
+            slot.delete_clip()
+        except Exception as exc:
+            error=exc
+            try:
+                if slot.has_clip:
+                    slot.delete_clip()
+            except Exception:
+                pass
+        finally:
+            try:
+                song.end_undo_step()
+            except Exception as exc:
+                error=error or exc
+        if error is not None:
+            try:
+                song.undo()
+            except Exception as undo_error:
+                raise RuntimeError('Ошибка нарезки: %s; откат тоже не удался: %s. Не сохраняй проект.' %
+                                   (error,undo_error))
+            raise RuntimeError('Live откатил изменения текущего клипа: %s' % error)
+        return {'ok':True,'created':count,'muted':muted_count,
+                'track_name':str(track.name),'clip_name':source['name']}
 
     def _replace(self, song, req):
         """A single clip replacement on its EXISTING track; one undo unit per clip.

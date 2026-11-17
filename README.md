@@ -1,19 +1,10 @@
 # Clear Silence
 
-Небольшая утилита Strip Silence для Ableton Live (macOS, Apple Silicon).
+Personal Ableton Live 12 tool for splitting clips and muting silence while retaining the original WAV source. **Current: v0.5.0 beta, unverified in real Live.**
 
-**Актуальная разрабатываемая версия: v0.4.0.** Это отдельное приложение с MIDI Remote Script `ClearSilenceBridge` — не Max for Live-плагин.
+- One Strength dial and instantaneous local waveform prediction.
+- Cyan = audible, magenta = muted.
+- Python Remote Script + small standalone macOS WebKit window.
+- Non-destructive *intent*: each generated clip links to the entire original WAV; gaps become muted clips, not removed audio.
 
-## Возможности
-
-- Компактное окно с предпросмотром участков, которые останутся или будут удалены.
-- Быстрые режимы «Мягко», «Обычно», «Жёстко» и ручные параметры Threshold, Min Silence, Padding.
-- Выбор текущей аудиодорожки Ableton, всех аудиодорожек с клипами или ручной список.
-- Анализ без изменения проекта, затем подтверждаемая замена клипов на исходных дорожках.
-- WAV-файлы оригиналов сохраняются; создаются новые фрагменты WAV.
-
-## Установка
-
-Скачайте PKG из [Releases](https://github.com/geroevboris/strip-silence/releases), закройте Ableton, установите приложение и откройте **Clear Silence.app**. При первом запуске оно обновит Remote Script, после чего нужно перезапустить Live и выбрать `ClearSilenceBridge` в Control Surface (MIDI Input/Output = None). Запускайте тест только на копии проекта.
-
-**Ограничения:** WAV без Warp, Loop и клиповой автоматизации; другие клипы пропускаются. Требуется Ableton Live 12.x. Разработчик не связан с коммерческим StripSilencer. v0.4.0 проверена локальными тестами, но пока не подтверждена на Mac пользователя.
+**Safety:** always test on a copy of your Live Set first. Live's Session-to-Arrangement duplication behavior must be validated on the actual Mac before relying on the tool. See [README_RU.md](README_RU.md).

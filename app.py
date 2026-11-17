@@ -11,6 +11,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from audio import WavFile
+from silence_math import settings_for_strength, regions_with_muted_gaps
 
 BRIDGE_PORT = 47861
 WEB_PORT = 47862
@@ -18,7 +19,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.4.0'
+APP_VERSION = '0.5.0'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -54,10 +55,10 @@ def bridge(action, **args):
 def require_replace_bridge():
     """Fail BEFORE creating files or editing Live when the installed script is old."""
     status = bridge('status')
-    if status.get('protocol') != 2 or 'replace' not in status.get('actions', []):
-        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge (%s). Переустанови актуальный PKG, закрой Ableton полностью и открой заново.' % status.get('version', 'неизвестен'))
+    if status.get('protocol') != 3 or 'split_mute' not in status.get('actions', []):
+        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.5.' % status.get('version', 'неизвестен'))
     if not status.get('can_replace', False):
-        raise RuntimeError('Live не предоставил безопасные операции Undo. Замена отключена, оригиналы не изменены.')
+        raise RuntimeError('Live не предоставил безопасные операции Undo. Разделение клипов отключено.')
     return status
 
 
@@ -174,32 +175,55 @@ def create_preview(req):
 
 
 
+def _settings(req):
+    if 'strength' in req:
+        return settings_for_strength(req['strength'])
+    return {'threshold': float(req.get('threshold', -45)),
+            'min_silence_ms': int(req.get('min_silence_ms', 150)),
+            'padding_ms': int(req.get('padding_ms', 30))}
+
+
+def clip_profile(req):
+    """One high-resolution peak read; changes to the single knob are local in JS."""
+    ti, ci = int(req['track_index']), int(req['clip_index'])
+    listing = bridge('list')
+    clip = get_clip(listing, ti, ci)
+    if 'error' in clip or clip['warping'] or clip['looping'] or clip['has_envelopes']:
+        raise ValueError('Этот клип не поддерживает предпросмотр (Warp, Loop или автоматизация).')
+    tempo = float(listing['tempo'])
+    duration = (clip['end'] - clip['start']) * 60 / tempo
+    if duration <= 0 or abs((clip['file_end'] - clip['file_offset']) - duration) > .09:
+        raise ValueError('Клип имеет нестандартную длительность или смещение.')
+    wav = WavFile(clip['file_path'])
+    peaks, hop, first, end = wav.peak_windows(clip['file_offset'], duration)
+    return {'ok': True, 'duration': duration, 'peaks': peaks, 'hop': hop,
+            'rate': wav.rate, 'first_frame': first, 'end_frame': end,
+            'waveform': wav.envelope(clip['file_offset'], duration, 550),
+            'muted': bool(clip['muted'])}
+
+
 def plan_batch(req):
     """Read-only inspection and sample analysis; never changes Live or its WAVs."""
     tis = req.get('track_indices', [])
     if not isinstance(tis, list) or len(tis) > 120:
-        raise ValueError('Выбери не более 120 аудиодорожек')
+        raise ValueError('Выбери не больше 120 аудиодорожек.')
     indices = sorted(set(int(x) for x in tis))
-    threshold = float(req.get('threshold', -45))
-    minimum = int(req.get('min_silence_ms', 150))
-    padding = int(req.get('padding_ms', 30))
+    opts = _settings(req)
+    threshold, minimum, padding = opts['threshold'], opts['min_silence_ms'], opts['padding_ms']
     if not (-90 <= threshold <= -1 and 30 <= minimum <= 5000 and 0 <= padding <= 1000):
         raise ValueError('Invalid threshold / silence / padding')
     snapshot = bridge('list')
+    if not indices:
+        chosen = snapshot.get('selected_track_index')
+        if chosen is None or not any(t['index'] == chosen for t in snapshot['tracks']):
+            raise ValueError('Не выбрана аудиодорожка с клипами.')
+        indices = [chosen]
     tempo = float(snapshot['tempo'])
     if tempo <= 0:
         raise ValueError('Invalid Live tempo')
-    # Never silently process every track when the selection is empty.
-    # For the current-track mode, fall back to Live's selected audio track.
-    if not indices:
-        current = snapshot.get('selected_track_index')
-        if any(tr['index'] == current for tr in snapshot['tracks']):
-            indices = [current]
-        else:
-            raise ValueError('Не выбрана аудиодорожка: переключи на «Все» или выбери дорожки вручную')
     selected = {tr['index']: tr for tr in snapshot['tracks'] if tr['index'] in indices}
     if not selected:
-        raise ValueError('На выбранных дорожках нет доступных аудиоклипов. Обнови список.')
+        raise ValueError('Selected tracks have no audio clips')
     entries, skipped, unchanged = [], [], []
     if sum(len(t['clips']) for t in selected.values()) > 150:
         raise ValueError('Max 150 audio clips per batch. Select fewer tracks.')
@@ -209,6 +233,9 @@ def plan_batch(req):
             try:
                 if 'error' in clip:
                     raise ValueError(clip['error'])
+                if bool(clip.get('muted', False)):
+                    unchanged.append(label)
+                    continue
                 if clip['warping'] or clip['looping']:
                     raise ValueError('Warp or Loop enabled')
                 if clip['has_envelopes'] or clip.get('has_groove') or clip['pitch_coarse'] or clip['pitch_fine']:
@@ -224,9 +251,7 @@ def plan_batch(req):
                 segments = wav.detect(clip['file_offset'], duration, threshold, minimum, padding)
                 if len(segments) > 150:
                     raise ValueError('Over 150 fragments; increase Min Silence')
-                if not segments and not bool(req.get('delete_fully_silent',False)):
-                    skipped.append({'name':label,'reason':'No active audio; enable Delete fully silent clips to remove it'})
-                    continue
+                # All-silent clips become muted, not deleted; the audio remains restorable.
                 full_start = round(clip['file_offset'] * wav.rate)
                 full_end = round((clip['file_offset'] + duration) * wav.rate)
                 if len(segments) == 1 and segments[0][0] <= full_start + wav.rate * .015 and segments[0][1] >= full_end - wav.rate * .015:
@@ -246,13 +271,56 @@ def plan_batch(req):
     with lock:
         batch_plans.clear()
         batch_plans[pid] = {'created':time.time(), 'entries':entries, 'tempo':tempo,
-                            'allow_empty':bool(req.get('delete_fully_silent',False))}
+                            'allow_empty':True}
     return {'ok': True, 'plan_id':pid,
             'replace_clips':len(entries), 'fragments':total_fragments,
             'silent_clips':total_silence,
             'skipped':skipped[:60], 'skipped_count':len(skipped),
             'unchanged_count':len(unchanged),
             'examples':[{'name':e['label'], 'fragments':len(e['segments'])} for e in entries[:25]]}
+
+
+def _mute_worker(job_id, plan):
+    """Retain full source files and mute gaps, one Undo group per source clip."""
+    def set_job(**items):
+        with lock:
+            jobs[job_id].update(items)
+    completed = 0
+    try:
+        require_replace_bridge()
+        for i, e in enumerate(plan['entries']):
+            with lock:
+                canceled = jobs[job_id].get('cancel', False)
+            if canceled:
+                set_job(state='canceled', message='Остановлено после %d клипов.' % completed)
+                return
+            set_job(current=i+1, message='Разделяю: '+e['label'])
+            wav = WavFile(e['file_path'])
+            origin = e['source']
+            first = round(origin['file_offset']*wav.rate)
+            end = round((origin['file_offset']+e['duration'])*wav.rate)
+            if end > wav.frames and end - wav.frames <= 2:
+                end = wav.frames
+            regions = regions_with_muted_gaps(e['segments'], first, end,
+                                               min_region_frames=round(wav.rate*.012))
+            if len(regions) > 150:
+                raise RuntimeError('Слишком много границ (%d) на одном клипе; уменьшай жёсткость.' % len(regions))
+            payload = []
+            for a,b,is_muted in regions:
+                st = origin['start'] + ((a/wav.rate)-origin['file_offset'])*e['tempo']/60
+                ed = origin['start'] + ((b/wav.rate)-origin['file_offset'])*e['tempo']/60
+                payload.append({'file_start': a/wav.rate, 'file_end': b/wav.rate,
+                                'time': st, 'end': ed, 'muted': bool(is_muted)})
+            response = bridge('split_mute', track_index=e['track_index'],
+                              track_name=e['track_name'], source=origin,
+                              tempo=e['tempo'], regions=payload)
+            completed += 1
+            set_job(completed=completed,
+                    message='Готово: %s · %d регионов, %d заглушено' %
+                    (e['label'], response['created'], response['muted']))
+        set_job(state='done', message='Готово. %d клипов разделено; исходные WAV не тронуты.' % completed)
+    except Exception as exc:
+        set_job(state='error', errors=[str(exc)], message=('Остановлено после %d клипов. %s' % (completed,exc)))
 
 
 def _batch_worker(job_id, plan):
@@ -311,13 +379,11 @@ def start_batch(req):
         raise ValueError('Analysis expired; analyze again')
     if not plan['entries']:
         raise ValueError('Nothing to replace')
-    if any(not e['segments'] for e in plan['entries']) and not plan['allow_empty']:
-        raise ValueError('Fully silent clip included without explicit permission; analyze with delete checkbox')
     job_id=uuid.uuid4().hex
     with lock:
         jobs[job_id]={'state':'running','current':0,'total':len(plan['entries']),
                       'completed':0,'message':'Preparing WAV fragments…','errors':[], 'cancel':False}
-    worker=threading.Thread(target=_batch_worker,args=(job_id,plan),daemon=True)
+    worker=threading.Thread(target=_mute_worker,args=(job_id,plan),daemon=True)
     worker.start()
     return {'ok':True,'job_id':job_id}
 
@@ -386,7 +452,9 @@ class Handler(BaseHTTPRequestHandler):
             if n <= 0 or n > 10000:
                 raise ValueError('Invalid request size')
             data = json.loads(self.rfile.read(n))
-            if self.path == '/api/clip/visualize':
+            if self.path == '/api/clip/profile':
+                result = clip_profile(data)
+            elif self.path == '/api/clip/visualize':
                 result = visualize_clip(data)
             elif self.path == '/api/batch/analyze':
                 result = plan_batch(data)
@@ -436,7 +504,7 @@ if __name__ == '__main__':
     t.start()
     try:
         window = webview.create_window('Clear Silence', 'http://127.0.0.1:%d' % WEB_PORT,
-                                       width=478, height=740, min_size=(420, 620),
+                                       width=495, height=665, min_size=(420, 535),
                                        js_api=NativeWindowApi())
         webview.start(gui='cocoa', debug=False)
     finally:
