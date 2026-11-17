@@ -1,14 +1,13 @@
 # Clear Silence
 
-Personal Ableton Live 12 tool for splitting clips and muting silence while retaining the original WAV source. **Current: v0.5.1 beta, unverified in real Live.**
+Independent, local Ableton Live 12 utility for macOS (Apple Silicon).
 
-- One Strength dial and instantaneous local waveform prediction.
-- Cyan = audible, magenta = muted.
-- Python Remote Script + small standalone macOS WebKit window.
-- Non-destructive *intent*: each generated clip links to the entire original WAV; gaps become muted clips, not removed audio.
+**v0.5.2 is a safety-first compatibility probe, NOT a functioning bulk Strip Silence release.** The previous v0.5.1 produced Arrangement clips of incorrect length in real Live and aborted via Undo.
 
-**Safety:** always test on a copy of your Live Set first. Live's Session-to-Arrangement duplication behavior must be validated on the actual Mac before relying on the tool. See [README_RU.md](README_RU.md).
+This build adds **Test region trimming**: using the currently chosen audio clip, the Remote Script creates a temporary *muted* audio track, tries both direct Arrangement placement and Session-to-Arrangement placement, changes region markers **after** placement, reads back the actual start/end times, and cleans up the temporary track. Your original audio track and WAV are not touched. Bulk editing is disabled until these real-world results establish a safe technique.
 
-## v0.5.1: Session marker fix
+Install the PKG, restart Live, select `ClearSilenceBridge` as a Control Surface, select one WAV clip without Warp, and use **Проверить нарезку безопасно**. Please provide the resulting report.
 
-Arrangement duplication derives the length of an unlooped Session clip from `start_marker` and `end_marker`, not only `loop_start` and `loop_end`. The bridge now updates both pairs, validates the Session region before removing the Arrangement original, then verifies the inserted clips. Protocol 4 refuses old bridge 0.5.0 until Live restarts. Still test on a copy of the Live Set.
+Long-term requirement: non-destructive Split + Mute of silent intervals, with every region referencing the full source audio. See [issue #1](https://github.com/geroevboris/strip-silence/issues/1).
+
+[Russian setup and limitations](README_RU.md).
