@@ -17,6 +17,12 @@ on:
 permissions:
   contents: write
 
+# Keep only the latest build for this branch. Prevent a queue of stale packages
+# when source files are committed separately.
+concurrency:
+  group: clear-silence-installer-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pkg-arm64:
     runs-on: macos-15
