@@ -24,8 +24,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-tests:
+    name: Check Python sources and tests (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python syntax and unit tests
+        run: |
+          python -m compileall -q app.py audio.py silence_math.py ClearSilenceBridge packaging tests
+          python -m unittest discover -s tests -v
+          PYTHONPATH=packaging python -m unittest discover -s packaging/tests -v
+
   pkg-arm64:
-    runs-on: macos-15
+    # The macos-15 arm64 pool has lately cancelled queued jobs without
+    # allocating a runner. Try the distinct, officially supported macOS 26
+    # Apple Silicon pool while keeping the release architecture arm64.
+    needs: source-tests
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
