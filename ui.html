@@ -34,7 +34,7 @@ $('strength').addEventListener('input',()=>{$('level').textContent=$('strength')
 async function probe(){
  if(running||!bridgeReady)return;
  const val=$('clipPick').value;
- if(!/^\\d+:\\d+$/.test(val)){$('log').textContent='Выбери аудиоклип для проверки.';return}
+ if(!/^\d+:\d+$/.test(val)){$('log').textContent='Выбери аудиоклип для проверки.';return}
  const [ti,ci]=val.split(':').map(Number);
  running=true;updateScope();
  $('log').className='';
@@ -50,9 +50,9 @@ async function probe(){
   }
   lines.push('Временная дорожка удалена: '+(r.original_tracks_unchanged?'да':'нет'));
   lines.push('Исходный клип не изменялся. Пришли скриншот этого отчёта.');
-  $('log').textContent=lines.join('\\n');
+  $('log').textContent=lines.join('\n');
  }catch(e){$('log').className='error';$('log').textContent='Проверка не удалась: '+e.message+
- '\\nИсходный клип не должен был измениться. Если осталась временная дорожка — не сохраняй Live Set.'}
+ '\nИсходный клип не должен был измениться. Если осталась временная дорожка — не сохраняй Live Set.'}
  finally{running=false;updateScope()}
 }
 async function quitApp(){if(running){alert('Сначала заверши обработку.');return}try{await api('/api/shutdown',{});if(window.pywebview&&window.pywebview.api)await window.pywebview.api.close()}catch(e){$('log').textContent=e.message}}
