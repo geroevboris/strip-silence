@@ -1,6 +1,6 @@
 # Clear Silence installer build
 
 Status: success
-Run: https://github.com/geroevboris/strip-silence/actions/runs/43984292581
-Commit: 9e1a931f7d337a4a30b92baa530d892b4223bb43
-Release: https://github.com/geroevboris/strip-silence/releases/tag/v0.3.1-installer
+Run: https://github.com/geroevboris/strip-silence/actions/runs/44007166483
+Commit: d9534fb33c4d114930b4b83c30a66ba3ef1df432
+Release: https://github.com/geroevboris/strip-silence/releases/tag/v0.3.2-installer
