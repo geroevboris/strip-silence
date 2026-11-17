@@ -136,6 +136,7 @@ class TestClearSilenceBridge(unittest.TestCase):
         self.assertEqual(len(song.tracks[0].arrangement_clips),1)
         self.assertEqual(len(song.tracks[1].arrangement_clips),2)
 
+    @unittest.skip('Split + Mute disabled pending compatibility probe on real Live')
     def test_split_muted_gaps_retains_original_wav(self):
         song,status,path=self._run('success')
         self.assertEqual(status['state'],'done',status)
@@ -152,6 +153,7 @@ class TestClearSilenceBridge(unittest.TestCase):
         self.assertAlmostEqual(arr[0].start_time,16.,places=3)
         self.assertAlmostEqual(arr[-1].end_time,28.,places=3)
 
+    @unittest.skip('Split + Mute disabled pending compatibility probe on real Live')
     def test_undo_if_session_duplication_fails(self):
         song,status,path=self._run('failure')
         self.assertEqual(status['state'],'error',status)
@@ -182,6 +184,30 @@ class TestClearSilenceBridge(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'старый ClearSilenceBridge'):
                 app.require_replace_bridge()
 
+    def test_safe_probe_never_edits_source_clip(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=os.path.join(d,'source.wav')
+            self.make_audio(path)
+            song=Song(path)
+            original=song.tracks[0].arrangement_clips[0]
+            before=(original.start_time,original.end_time,
+                    original.loop_start,original.loop_end,
+                    original.file_path,original.muted)
+            bridge=ClearSilenceBridge(song)
+            try:
+                data=bridge._probe_region(song,{'track_index':0,'clip_index':0})
+                self.assertTrue(data['ok'],data)
+                self.assertEqual(len(data['results']),2,data)
+                self.assertTrue(data['original_tracks_unchanged'],data)
+                self.assertEqual(len(song.tracks),1)
+                self.assertIs(song.tracks[0].arrangement_clips[0],original)
+                after=(original.start_time,original.end_time,
+                       original.loop_start,original.loop_end,
+                       original.file_path,original.muted)
+                self.assertEqual(before,after)
+            finally:
+                bridge.disconnect()
+
     def test_stale_bridge_rejected(self):
         sentinel={'created':time.time(),'entries':[{'name':'whatever'}], 'allow_empty':False}
         app.batch_plans['old-bridge']=sentinel
@@ -190,7 +216,7 @@ class TestClearSilenceBridge(unittest.TestCase):
             raise ValueError('old')
         try:
             with patch.object(app,'bridge',old):
-                with self.assertRaisesRegex(RuntimeError,'старый ClearSilenceBridge'):
+                with self.assertRaisesRegex(RuntimeError,'Пакетная обработка отключена'):
                     app.start_batch({'plan_id':'old-bridge'})
             self.assertIs(app.batch_plans['old-bridge'],sentinel)
         finally:
