@@ -1,0 +1,77 @@
+#!/bin/bash
+# macOS Installer runs this as root. Install the control surface only for the
+# active console user, without changing the contents of any Ableton installation.
+set -euo pipefail
+
+LOGGER=/usr/bin/logger
+APP="${3:-/}/Applications/Clear Silence.app"
+SOURCE="$APP/Contents/Resources/ClearSilenceBridge/__init__.py"
+
+if [ ! -f "$SOURCE" ]; then
+  echo "Clear Silence: packaged Remote Script is missing: $SOURCE" >&2
+  exit 1
+fi
+
+USER_NAME=$(/usr/bin/stat -f '%Su' /dev/console)
+if [[ -z "$USER_NAME" || "$USER_NAME" == 'root' || "$USER_NAME" == 'loginwindow' || "$USER_NAME" == '_mbsetupuser' ]]; then
+  echo 'Clear Silence: install while logged into your macOS user account.' >&2
+  exit 1
+fi
+
+USER_HOME=$(/usr/bin/dscl . -read "/Users/$USER_NAME" NFSHomeDirectory | /usr/bin/sed -n 's/^NFSHomeDirectory: //p')
+if [[ -z "$USER_HOME" || ! -d "$USER_HOME" ]]; then
+  echo "Clear Silence: cannot locate user home for $USER_NAME" >&2
+  exit 1
+fi
+
+REMOTE_ROOT="$USER_HOME/Music/Ableton/User Library/Remote Scripts"
+TARGET="$REMOTE_ROOT/ClearSilenceBridge"
+BACKUP_ROOT="$USER_HOME/Music/Ableton/User Library/.ClearSilence Backups"
+
+/bin/mkdir -p "$REMOTE_ROOT" "$BACKUP_ROOT"
+
+# This folder was root-owned on some installations. Only fix the exact
+# Remote Scripts directory when its owner is root (never chown ~/Music recursively).
+if [[ "$(/usr/bin/stat -f '%Su' "$REMOTE_ROOT")" == root ]]; then
+  /usr/sbin/chown "$USER_NAME":staff "$REMOTE_ROOT"
+fi
+
+# Stage a complete replacement before moving any existing version.
+STAGE=$(/usr/bin/mktemp -d "$REMOTE_ROOT/.ClearSilenceBridge.pkg.XXXXXXXX")
+restore_on_error() {
+  [[ -d "$STAGE" ]] && /bin/rm -rf "$STAGE"
+}
+trap restore_on_error EXIT
+/usr/bin/install -m 0644 "$SOURCE" "$STAGE/__init__.py"
+/usr/sbin/chown -R "$USER_NAME":staff "$STAGE"
+
+BACKUP=""
+if [[ -e "$TARGET" || -L "$TARGET" ]]; then
+  BACKUP="$BACKUP_ROOT/ClearSilenceBridge.backup.$(/bin/date +%Y%m%d-%H%M%S)-$$"
+  /bin/mv "$TARGET" "$BACKUP"
+  /usr/sbin/chown -R "$USER_NAME":staff "$BACKUP" || true
+fi
+
+if ! /bin/mv "$STAGE" "$TARGET"; then
+  if [[ -n "$BACKUP" ]]; then
+    /bin/mv "$BACKUP" "$TARGET" || true
+  fi
+  echo 'Clear Silence: failed to install bridge; restored previous version if available.' >&2
+  exit 1
+fi
+/bin/chmod 0755 "$TARGET"
+/usr/sbin/chown -R "$USER_NAME":staff "$TARGET"
+/bin/chmod 0755 "$REMOTE_ROOT"
+/usr/sbin/chown "$USER_NAME":staff "$BACKUP_ROOT"
+trap - EXIT
+
+# Old backups inside Remote Scripts can look like extra Control Surfaces.
+# Preserve them, but move only our own backups out of the scan folder.
+for OLD in "$REMOTE_ROOT"/ClearSilenceBridge.backup.*; do
+  if [[ -d "$OLD" ]]; then
+    /bin/mv "$OLD" "$BACKUP_ROOT/$(/usr/bin/basename "$OLD")" 2>/dev/null || true
+  fi
+done
+
+printf 'Clear Silence: installed application and bridge for %s. Restart Ableton Live and select ClearSilenceBridge in Control Surface.\n' "$USER_NAME"
+exit 0
