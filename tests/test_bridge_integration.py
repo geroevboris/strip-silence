@@ -103,7 +103,7 @@ class TestClearSilenceBridge(unittest.TestCase):
                 def work():
                     try:
                         s=app.bridge('status')
-                        assert s['protocol']==4 and 'split_mute' in s['actions']
+                        assert s['protocol']==5 and 'probe_region' in s['actions']
                         profile=app.clip_profile({'track_index':0,'clip_index':0})
                         assert len(profile['peaks'])>100
                         if scenario=='preview':
@@ -162,16 +162,18 @@ class TestClearSilenceBridge(unittest.TestCase):
         self.assertFalse(song.tracks[0].clip_slots[0].has_clip)
         self.assertEqual({c.file_path for c in song.tracks[0].arrangement_clips},{path})
 
-    def test_unexpected_arrangement_length_rolls_back_original(self):
-        # If Live ignores markers during duplication, fail closed: no shifted
-        # regions, no missing source clip, and no leftover Session clip.
+    def test_unverified_split_mute_is_blocked_before_edit(self):
+        # The previous implementation ignored Arrangement length in Live.
+        # The diagnostic release MUST refuse bulk processing until a real
+        # Live compatibility probe has been inspected.
         song, status, path = self._run('wrong_length', one_clip=True)
-        self.assertEqual(status['state'], 'error', status)
-        self.assertEqual(status['completed'], 0, status)
-        self.assertIn('Нарушена длительность региона', status['message'])
+        self.assertEqual(status['state'], 'exception', status)
+        self.assertIn('Пакетная обработка отключена', status['error'])
+        self.assertEqual(len(song.tracks), 1)
         self.assertEqual(len(song.tracks[0].arrangement_clips), 1)
         original = song.tracks[0].arrangement_clips[0]
         self.assertEqual((original.start_time, original.end_time), (16., 20.))
+        self.assertEqual(original.file_path, path)
         self.assertFalse(song.tracks[0].clip_slots[0].has_clip)
 
     def test_previous_0_5_bridge_is_refused_before_any_edit(self):
