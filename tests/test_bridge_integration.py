@@ -23,6 +23,9 @@ class Clip:
     def __init__(self,path='',st=16.,ed=20.,loopstart=0.,loopend=2.):
         self.file_path=path;self.name='Test';self.start_time=st;self.end_time=ed
         self.loop_start=loopstart;self.loop_end=loopend
+        # In unlooped Live clips, Arrangement duplication length is derived
+        # from start/end markers, not just loop brace coordinates.
+        self.start_marker=loopstart;self.end_marker=loopend
 
 class Slot:
     def __init__(self):self.clip=None
@@ -38,12 +41,15 @@ class Track:
     has_audio_input=True;is_frozen=False
     def __init__(self,clips):
         self.name='Sound';self.arrangement_clips=clips;self.clip_slots=[Slot()]
-        self.mute=False;self.fail_next_duplicate=False
+        self.mute=False;self.fail_next_duplicate=False;self.ignore_content_markers=False
     def duplicate_clip_to_arrangement(self,session,beat):
         if self.fail_next_duplicate:
             self.fail_next_duplicate=False
             raise RuntimeError('Simulated duplication failure')
-        duration=(session.loop_end-session.loop_start)*2
+        # Live's unlooped Session clip length comes from the content markers,
+        # not merely the loop brace. Ignore them only for rollback regression.
+        duration=((session.loop_end if self.ignore_content_markers else session.end_marker)
+                  -(0. if self.ignore_content_markers else session.start_marker))*2
         cl=copy.copy(session);cl.start_time=beat;cl.end_time=beat+duration
         self.arrangement_clips.append(cl)
         return cl
@@ -87,12 +93,17 @@ class TestClearSilenceBridge(unittest.TestCase):
                 song=Song(path)
                 if not one_clip: song.tracks[0].arrangement_clips.append(Clip(path,24.,28.))
                 if scenario=='failure':song.tracks[0].fail_next_duplicate=True
+                if scenario=='wrong_length':song.tracks[0].ignore_content_markers=True
                 bridge=ClearSilenceBridge(song)
+                until=time.time()+2
+                while bridge._server_socket is None and time.time()<until:
+                    time.sleep(.005)
+                self.assertIsNotNone(bridge._server_socket, 'Test bridge listener failed to start')
                 results=[]
                 def work():
                     try:
                         s=app.bridge('status')
-                        assert s['protocol']==3 and 'split_mute' in s['actions']
+                        assert s['protocol']==4 and 'split_mute' in s['actions']
                         profile=app.clip_profile({'track_index':0,'clip_index':0})
                         assert len(profile['peaks'])>100
                         if scenario=='preview':
@@ -132,6 +143,9 @@ class TestClearSilenceBridge(unittest.TestCase):
         arr=song.tracks[0].arrangement_clips
         self.assertGreater(len(arr),5)
         self.assertEqual([c.file_path for c in arr],[path]*len(arr))
+        self.assertTrue(all(abs((c.loop_end-c.loop_start) * 2-(c.end_time-c.start_time))<0.005 for c in arr))
+        self.assertTrue(all(abs(c.start_marker-c.loop_start)<0.005 and
+                            abs(c.end_marker-c.loop_end)<0.005 for c in arr))
         self.assertTrue(any(c.muted for c in arr))
         self.assertTrue(any(not c.muted for c in arr))
         self.assertFalse(song.tracks[0].clip_slots[0].has_clip)
@@ -145,6 +159,28 @@ class TestClearSilenceBridge(unittest.TestCase):
         self.assertEqual(len(song.tracks[0].arrangement_clips),2)
         self.assertFalse(song.tracks[0].clip_slots[0].has_clip)
         self.assertEqual({c.file_path for c in song.tracks[0].arrangement_clips},{path})
+
+    def test_unexpected_arrangement_length_rolls_back_original(self):
+        # If Live ignores markers during duplication, fail closed: no shifted
+        # regions, no missing source clip, and no leftover Session clip.
+        song, status, path = self._run('wrong_length', one_clip=True)
+        self.assertEqual(status['state'], 'error', status)
+        self.assertEqual(status['completed'], 0, status)
+        self.assertIn('Нарушена длительность региона', status['message'])
+        self.assertEqual(len(song.tracks[0].arrangement_clips), 1)
+        original = song.tracks[0].arrangement_clips[0]
+        self.assertEqual((original.start_time, original.end_time), (16., 20.))
+        self.assertFalse(song.tracks[0].clip_slots[0].has_clip)
+
+    def test_previous_0_5_bridge_is_refused_before_any_edit(self):
+        # Both versions expose split_mute; the new protocol prevents reusing
+        # the buggy bridge just because its command names match.
+        with patch.object(app, 'bridge', return_value={
+            'ok':True, 'version':'0.5.0', 'protocol':3,
+            'actions':['status','list','split_mute'], 'can_replace':True
+        }):
+            with self.assertRaisesRegex(RuntimeError, 'старый ClearSilenceBridge'):
+                app.require_replace_bridge()
 
     def test_stale_bridge_rejected(self):
         sentinel={'created':time.time(),'entries':[{'name':'whatever'}], 'allow_empty':False}

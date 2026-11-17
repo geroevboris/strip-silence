@@ -2,7 +2,7 @@
 # Build a self-contained native macOS app + real installer package.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VERSION=0.5.0
+VERSION=0.5.1
 OUTPUT_DIR="$PWD/package-output"
 ROOT="$PWD/package-build/root"
 ICONSET="$PWD/package-build/ClearSilence.iconset"
@@ -44,8 +44,8 @@ p=sys.argv[1]
 with open(p,'rb') as f: d=plistlib.load(f)
 d['CFBundleDisplayName']='Clear Silence'
 d['CFBundleName']='Clear Silence'
-d['CFBundleShortVersionString']='0.5.0'
-d['CFBundleVersion']='0.5.0'
+d['CFBundleShortVersionString']='0.5.1'
+d['CFBundleVersion']='0.5.1'
 d['LSMinimumSystemVersion']='11.0'
 with open(p,'wb') as f: plistlib.dump(d,f)
 PY

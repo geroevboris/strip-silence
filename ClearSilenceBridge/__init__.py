@@ -13,7 +13,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.5.0'
+VERSION = '0.5.1'
 
 
 def create_instance(c_instance):
@@ -127,7 +127,7 @@ class ClearSilenceBridge(ControlSurface):
         if action == 'status':
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': len(song.tracks),
                     'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo')),
-                    'protocol': 3, 'actions': ['status', 'list', 'preview', 'split_mute']}
+                    'protocol': 4, 'actions': ['status', 'list', 'preview', 'split_mute']}
         if action == 'list':
             tracks = []
             for ti, track in enumerate(song.tracks):
@@ -341,16 +341,42 @@ class ClearSilenceBridge(ControlSurface):
             # by dragging clip boundaries. Never call crop()/write_slice().
             if str(session.file_path)!=source_path:
                 raise RuntimeError('Session clip references the wrong source WAV.')
+            # Probe marker support before touching the Arrangement source.
+            # Live may expose the setters but reject / clamp a narrow range.
+            first = regions[0]
+            a0, b0 = float(first['file_start']), float(first['file_end'])
+            session.loop_end = b0
+            session.loop_start = a0
+            session.end_marker = b0
+            session.start_marker = a0
+            for name, expected in (('loop_start', a0), ('loop_end', b0),
+                                   ('start_marker', a0), ('end_marker', b0)):
+                if abs(float(getattr(session, name)) - expected) > .002:
+                    raise RuntimeError('Live не принял маркер %s ещё до изменения клипа.' % name)
+
             track.delete_clip(original)
             did_change=True
             for region in regions:
                 a,b=float(region['file_start']),float(region['file_end'])
                 st,ed=float(region['time']),float(region['end'])
-                # Setting loop_end BEFORE loop_start prevents invalid ranges.
-                session.loop_end=b
-                session.loop_start=a
-                if abs(float(session.loop_start)-a)>.002 or abs(float(session.loop_end)-b)>.002:
-                    raise RuntimeError('Live не установил границы фрагмента в Session.')
+                # With Loop OFF, Live's Session->Arrangement duplicator uses
+                # the content start/end markers to determine Arrangement length.
+                # Changing only loop_start/loop_end can leave the *full sample*
+                # length, so the resulting region extends into the next one.
+                # Set the end first, then the start, for both pairs of markers.
+                session.loop_end = b
+                session.loop_start = a
+                session.end_marker = b
+                session.start_marker = a
+                for name, expected in (
+                        ('loop_start', a), ('loop_end', b),
+                        ('start_marker', a), ('end_marker', b)):
+                    actual = float(getattr(session, name))
+                    if abs(actual - expected) > .002:
+                        raise RuntimeError(
+                            'Live не установил %s: %.5f вместо %.5f. '
+                            'Исходный клип будет восстановлен.' %
+                            (name, actual, expected))
                 session.muted=bool(region['muted'])
                 track.duplicate_clip_to_arrangement(session,st)
                 found=[]
@@ -365,10 +391,25 @@ class ClearSilenceBridge(ControlSurface):
                     raise RuntimeError('Live не создал однозначный регион: %.4f' % st)
                 new=found[0]
                 if abs(float(new.end_time)-ed)>.02:
-                    raise RuntimeError('Нарушена длительность региона: %.4f vs %.4f' %
-                                       (float(new.end_time),ed))
+                    raise RuntimeError(
+                        'Нарушена длительность региона: %.4f vs %.4f; '
+                        'Session: start_marker=%.5f, end_marker=%.5f, '
+                        'loop_start=%.5f, loop_end=%.5f' %
+                        (float(new.end_time), ed, float(session.start_marker),
+                         float(session.end_marker), float(session.loop_start),
+                         float(session.loop_end)))
                 if new.warping:
                     raise RuntimeError('Live автоматически включил Warp; остановлено.')
+                for name, expected in (('loop_start', a), ('loop_end', b),
+                                       ('start_marker', a), ('end_marker', b)):
+                    try:
+                        actual = float(getattr(new, name))
+                    except Exception:
+                        raise RuntimeError('Не удаётся проверить %s у созданного клипа.' % name)
+                    if abs(actual - expected) > .005:
+                        raise RuntimeError(
+                            'Созданный клип ссылается на неверный участок WAV: '
+                            '%s=%.5f вместо %.5f' % (name, actual, expected))
                 new.muted=bool(region['muted'])
                 new.name=str(source['name'])[:120]
                 new.gain=float(source['gain'])
