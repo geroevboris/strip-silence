@@ -127,7 +127,7 @@ class ClearSilenceBridge(ControlSurface):
         if action == 'status':
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': len(song.tracks),
                     'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo')),
-                    'protocol': 4, 'actions': ['status', 'list', 'preview', 'split_mute']}
+                    'protocol': 5, 'actions': ['status', 'list', 'preview', 'split_mute', 'probe_region']}
         if action == 'list':
             tracks = []
             for ti, track in enumerate(song.tracks):
@@ -164,6 +164,8 @@ class ClearSilenceBridge(ControlSurface):
                 pass
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo),
                     'selected_track_index':selected, 'tracks': tracks}
+        if action == 'probe_region':
+            return self._probe_region(song, req)
         if action == 'split_mute':
             return self._split_mute(song, req)
         if action == 'replace':
@@ -234,6 +236,162 @@ class ClearSilenceBridge(ControlSurface):
                 raise
             return {'ok': True, 'created': count, 'track_name': str(new_track.name), 'muted': True}
         return {'ok': False, 'error': 'Unknown action'}
+
+    def _probe_region(self, song, req):
+        """Non-destructive compatibility probe on a TEMPORARY muted audio track.
+
+        Tests whether arrangement audio can be trimmed AFTER placement without
+        writing new/shortened WAV files. Does not touch the selected source
+        track; no production clip replacement is attempted.
+        """
+        if song.is_playing or song.record_mode:
+            raise RuntimeError('Останови воспроизведение/запись перед тестом.')
+        ti, ci = int(req['track_index']), int(req['clip_index'])
+        if not 0 <= ti < len(song.tracks):
+            raise RuntimeError('Дорожка не найдена.')
+        source_track = song.tracks[ti]
+        clips = source_track.arrangement_clips
+        if not 0 <= ci < len(clips):
+            raise RuntimeError('Клип не найден.')
+        source = clips[ci]
+        if not source.is_audio_clip or source.warping or source.looping:
+            raise RuntimeError('Для теста выбери WAV-клип без Warp/Loop.')
+        source_path = str(source.file_path)
+        if not os.path.isfile(source_path):
+            raise RuntimeError('Не найден исходный WAV.')
+        source_start, source_end = float(source.loop_start), float(source.loop_end)
+        span = source_end - source_start
+        if span < .18:
+            raise RuntimeError('Слишком короткий исходный клип.')
+        a = source_start + min(.37, span * .2)
+        b = min(source_end, a + min(.73, span * .35))
+        if b - a < .04:
+            raise RuntimeError('Слишком короткий интервал для теста.')
+        position = 8.0
+        expected = position + (b - a) * float(song.tempo) / 60.0
+        if not callable(getattr(song, 'create_audio_track', None)):
+            raise RuntimeError('Live не разрешает создать временную дорожку.')
+        if not callable(getattr(song, 'delete_track', None)):
+            raise RuntimeError('Live не разрешает удалить временную дорожку.')
+        original_track_count = len(song.tracks)
+        results = []
+        scratch_created = False
+        undo_open = False
+        cleanup_error = None
+
+        def inspect(method, clip):
+            """Read the actual arrangement duration, not mock expectations."""
+            return {
+                'method': method,
+                'start': round(float(clip.start_time), 5),
+                'end': round(float(clip.end_time), 5),
+                'loop_start': round(float(clip.loop_start), 5),
+                'loop_end': round(float(clip.loop_end), 5),
+                'start_marker': round(float(clip.start_marker), 5),
+                'end_marker': round(float(clip.end_marker), 5),
+                'expected_end': round(expected, 5),
+                'difference_beats': round(float(clip.end_time) - expected, 5),
+                'same_file': str(clip.file_path) == source_path,
+                'ok': (abs(float(clip.start_time) - position) <= .01
+                       and abs(float(clip.end_time) - expected) <= .02
+                       and abs(float(clip.loop_start) - a) <= .01
+                       and abs(float(clip.loop_end) - b) <= .01
+                       and str(clip.file_path) == source_path
+                       and not bool(clip.warping))
+            }
+
+        def trim(clip):
+            clip.warping = False
+            clip.looping = False
+            # Live may duplicate a full-length Session clip; trim in
+            # Arrangement *after* placement. Check real start/end time.
+            clip.loop_end = b
+            clip.loop_start = a
+            clip.end_marker = b
+            clip.start_marker = a
+
+        try:
+            song.begin_undo_step()
+            undo_open = True
+            song.create_audio_track(original_track_count)
+            scratch_created = True
+            scratch = song.tracks[original_track_count]
+            scratch.name = 'Clear Silence TEMP / compatibility check'
+            scratch.mute = True
+            if not callable(getattr(scratch, 'create_audio_clip', None)):
+                results.append({'method': 'direct', 'ok': False,
+                                'error': 'create_audio_clip недоступен'})
+            else:
+                try:
+                    fresh = scratch.create_audio_clip(source_path, position)
+                    trim(fresh)
+                    results.append(inspect('direct_then_trim', fresh))
+                except Exception as ex:
+                    results.append({'method': 'direct_then_trim', 'ok': False,
+                                    'error': str(ex)})
+                finally:
+                    for c in tuple(scratch.arrangement_clips):
+                        scratch.delete_clip(c)
+            if not callable(getattr(scratch, 'duplicate_clip_to_arrangement', None)):
+                results.append({'method': 'session_then_trim', 'ok': False,
+                                'error': 'duplicate_clip_to_arrangement недоступен'})
+            else:
+                try:
+                    slot = next((s for s in scratch.clip_slots
+                                 if not s.has_clip and
+                                    callable(getattr(s, 'create_audio_clip', None))), None)
+                    if slot is None:
+                        raise RuntimeError('Нет пустого Session-слота')
+                    slot.create_audio_clip(source_path)
+                    session = slot.clip
+                    session.warping = False
+                    session.looping = False
+                    created = scratch.duplicate_clip_to_arrangement(session, position)
+                    trim(created)
+                    results.append(inspect('session_then_trim', created))
+                except Exception as ex:
+                    results.append({'method': 'session_then_trim', 'ok': False,
+                                    'error': str(ex)})
+                finally:
+                    for c in tuple(scratch.arrangement_clips):
+                        scratch.delete_clip(c)
+                    for slot in scratch.clip_slots:
+                        if slot.has_clip:
+                            slot.delete_clip()
+        finally:
+            if scratch_created:
+                try:
+                    song.delete_track(original_track_count)
+                except Exception as ex:
+                    cleanup_error = str(ex)
+            if undo_open:
+                try:
+                    song.end_undo_step()
+                except Exception as ex:
+                    cleanup_error = cleanup_error or str(ex)
+            if len(song.tracks) != original_track_count or cleanup_error:
+                try:
+                    song.undo()
+                except Exception as ex:
+                    raise RuntimeError('Не удалось удалить тестовую дорожку; '
+                                       'НЕ СОХРАНЯЙ проект. %s; undo: %s' %
+                                       (cleanup_error, ex))
+                if len(song.tracks) != original_track_count:
+                    raise RuntimeError('Не удалось восстановить число дорожек. '
+                                       'НЕ СОХРАНЯЙ проект.')
+        return {
+            'ok': True, 'version': VERSION,
+            'expected_start': position,
+            'expected_end': round(expected, 5),
+            'source_range_seconds': [round(a, 5), round(b, 5)],
+            'results': results,
+            'supported': any(item.get('ok') for item in results),
+            'original_tracks_unchanged': len(song.tracks) == original_track_count,
+            'message': ('Проверка на временной дорожке завершена; оригинал не изменялся.'
+                        if any(item.get('ok') for item in results)
+                        else 'Live не подтвердил ни один безопасный способ. '
+                             'Применение к исходным клипам заблокировано.')
+        }
 
     def _split_mute(self, song, req):
         """Rebuild a clip as source-referencing regions, muting only the gaps.
