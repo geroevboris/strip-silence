@@ -53,3 +53,23 @@ jobs:
               --title 'Clear Silence v0.3.1 — macOS installer' \
               --notes 'Experimental Apple Silicon PKG installer. Installs /Applications/Clear Silence.app and the ClearSilenceBridge Remote Script for the signed-in macOS user. Restart Ableton Live; select ClearSilenceBridge as Control Surface. Unsigned/not notarized: macOS may require an explicit Open approval. Test on a copy of your Ableton project.'
           fi
+
+      - name: Record result in repository
+        if: always()
+        env:
+          BUILD_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo '# Clear Silence installer build'
+            echo
+            echo "Status: $BUILD_STATUS"
+            echo "Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "Commit: ${GITHUB_SHA}"
+            if [ "$BUILD_STATUS" = 'success' ]; then
+              echo 'Release: https://github.com/geroevboris/strip-silence/releases/tag/v0.3.1-installer'
+            fi
+          } > INSTALLER_BUILD_STATUS.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add INSTALLER_BUILD_STATUS.md
+          git diff --cached --quiet || (git commit -m "Record installer build: $BUILD_STATUS" && git push)
