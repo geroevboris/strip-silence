@@ -13,7 +13,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.3.0'
+VERSION = '0.4.0'
 
 
 def create_instance(c_instance):
@@ -156,7 +156,14 @@ class ClearSilenceBridge(ControlSurface):
                         clips.append({'index': ci, 'name': str(clip.name), 'error': str(e)})
                 if clips:
                     tracks.append({'index': ti, 'name': str(track.name), 'clips': clips})
-            return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': tracks}
+            # Report actual Live selection independently of tracks with clips.
+            try:
+                chosen = song.view.selected_track
+                selected_index = next((i for i, t in enumerate(song.tracks) if t == chosen), None)
+            except (AttributeError, RuntimeError):
+                selected_index = None
+            return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo),
+                    'tracks': tracks, 'selected_track_index': selected_index}
         if action == 'replace':
             return self._replace(song, req)
         if action == 'preview':

@@ -18,7 +18,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.3.0'
+APP_VERSION = '0.4.0'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -55,7 +55,7 @@ def require_replace_bridge():
     """Fail BEFORE creating files or editing Live when the installed script is old."""
     status = bridge('status')
     if status.get('protocol') != 2 or 'replace' not in status.get('actions', []):
-        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Запусти 01_INSTALL.command из v0.3, полностью закрой Ableton и открой снова. Текущий мост: %s, нужен v0.3.' % status.get('version', 'неизвестен'))
+        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge (%s). Переустанови актуальный PKG, закрой Ableton полностью и открой заново.' % status.get('version', 'неизвестен'))
     if not status.get('can_replace', False):
         raise RuntimeError('Live не предоставил безопасные операции Undo. Замена отключена, оригиналы не изменены.')
     return status
@@ -177,8 +177,8 @@ def create_preview(req):
 def plan_batch(req):
     """Read-only inspection and sample analysis; never changes Live or its WAVs."""
     tis = req.get('track_indices', [])
-    if not isinstance(tis, list) or not tis or len(tis) > 120:
-        raise ValueError('Select 1–120 audio tracks')
+    if not isinstance(tis, list) or len(tis) > 120:
+        raise ValueError('Выбери не более 120 аудиодорожек')
     indices = sorted(set(int(x) for x in tis))
     threshold = float(req.get('threshold', -45))
     minimum = int(req.get('min_silence_ms', 150))
@@ -189,9 +189,17 @@ def plan_batch(req):
     tempo = float(snapshot['tempo'])
     if tempo <= 0:
         raise ValueError('Invalid Live tempo')
+    # Never silently process every track when the selection is empty.
+    # For the current-track mode, fall back to Live's selected audio track.
+    if not indices:
+        current = snapshot.get('selected_track_index')
+        if any(tr['index'] == current for tr in snapshot['tracks']):
+            indices = [current]
+        else:
+            raise ValueError('Не выбрана аудиодорожка: переключи на «Все» или выбери дорожки вручную')
     selected = {tr['index']: tr for tr in snapshot['tracks'] if tr['index'] in indices}
     if not selected:
-        raise ValueError('Selected tracks have no audio clips')
+        raise ValueError('На выбранных дорожках нет доступных аудиоклипов. Обнови список.')
     entries, skipped, unchanged = [], [], []
     if sum(len(t['clips']) for t in selected.values()) > 150:
         raise ValueError('Max 150 audio clips per batch. Select fewer tracks.')
@@ -428,7 +436,7 @@ if __name__ == '__main__':
     t.start()
     try:
         window = webview.create_window('Clear Silence', 'http://127.0.0.1:%d' % WEB_PORT,
-                                       width=1180, height=860, min_size=(870, 620),
+                                       width=478, height=740, min_size=(420, 620),
                                        js_api=NativeWindowApi())
         webview.start(gui='cocoa', debug=False)
     finally:

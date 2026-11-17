@@ -10,6 +10,7 @@ on:
       - 'audio.py'
       - 'ui.html'
       - 'ClearSilenceBridge/**'
+      - 'tests/**'
   workflow_dispatch:
 
 permissions:
@@ -33,7 +34,7 @@ jobs:
       - name: Upload PKG to workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Clear-Silence-v0.3.2-macOS-Apple-Silicon
+          name: Clear-Silence-v0.4.0-macOS-Apple-Silicon
           path: |
             package-output/*.pkg
             package-output/*.sha256
@@ -42,33 +43,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG='v0.3.2-installer'
-          PKG='package-output/Clear_Silence_0.3.2_macOS_Apple_Silicon.pkg'
+          TAG='v0.4.0-installer'
+          PKG='package-output/Clear_Silence_0.4.0_macOS_Apple_Silicon.pkg'
           SUM="${PKG}.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$PKG" "$SUM" --clobber
           else
             gh release create "$TAG" "$PKG" "$SUM" \
               --target "$GITHUB_SHA" \
-              --title 'Clear Silence v0.3.2 — macOS installer' \
-              --notes 'Experimental Apple Silicon PKG installer. Installs /Applications/Clear Silence.app without writing into ~/Music during package installation. On first app launch ClearSilenceBridge is installed for the signed-in user. Then restart Ableton Live; select ClearSilenceBridge as Control Surface. Unsigned/not notarized: macOS may require an explicit Open approval. Test on a copy of your Ableton project.'
+              --title 'Clear Silence v0.4.0 — Compact UI' \
+              --notes 'Compact macOS interface, auto-selected audio track, all/custom track modes, preview, new waveform icon. No change to the WAV slicing algorithm. The app updates ClearSilenceBridge on first launch; restart Live after that update. Unsigned and unnotarized; use on a copy of the Live Set.'
           fi
-      - name: Record result in repository
-        if: always()
-        env:
-          BUILD_STATUS: ${{ job.status }}
-        run: |
-          {
-            echo '# Clear Silence installer build'
-            echo
-            echo "Status: $BUILD_STATUS"
-            echo "Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-            echo "Commit: ${GITHUB_SHA}"
-            if [ "$BUILD_STATUS" = 'success' ]; then
-              echo 'Release: https://github.com/geroevboris/strip-silence/releases/tag/v0.3.2-installer'
-            fi
-          } > INSTALLER_BUILD_STATUS.md
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add INSTALLER_BUILD_STATUS.md
-          git diff --cached --quiet || (git commit -m "Record installer build: $BUILD_STATUS" && git push)
