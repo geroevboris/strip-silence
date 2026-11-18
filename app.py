@@ -21,7 +21,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.6.1'
+APP_VERSION = '0.6.2'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -57,8 +57,8 @@ def bridge(action, **args):
 def require_replace_bridge():
     """Fail BEFORE creating files or editing Live when the installed script is old."""
     status = bridge('status')
-    if status.get('protocol') != 10 or 'auto_begin' not in status.get('actions', []):
-        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.6.1.' % status.get('version', 'неизвестен'))
+    if status.get('protocol') != 11 or 'auto_begin' not in status.get('actions', []):
+        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.6.2.' % status.get('version', 'неизвестен'))
     if not status.get('can_replace', False):
         raise RuntimeError('Live не предоставил безопасные операции Undo. Разделение клипов отключено.')
     return status
@@ -442,7 +442,25 @@ def _auto_native_worker(job_id, plan):
                             'Playhead не достиг позиции %.5f (фактически %.5f).' %
                             (arm['target_beat'],
                              confirmed['observed_beat'] if confirmed else -1))
-                    prepared=native_automation.prepare_native_split()
+                    try:
+                        prepared=native_automation.prepare_native_split()
+                    except native_automation.SplitUnavailable:
+                        # Focus is not a lane selection. A fresh disabled menu
+                        # permits ONE non-editing recovery, never a Split retry.
+                        lane=bridge('auto_lane')
+                        selected=native_automation.select_native_lane(lane['track_name'])
+                        logger.info('clip=%d cut=%d selection=%s',i+1,cut+1,selected)
+                        bridge('auto_reposition')
+                        for retry in range(12):
+                            time.sleep(.14)
+                            position=bridge('auto_confirm',position_only=True)
+                            if position['confirmed']:
+                                break
+                        if not position['confirmed']:
+                            raise RuntimeError('Не удалось восстановить точную позицию после выбора дорожки.')
+                        # Keep the actual clicked lane active. Option+2 or a
+                        # detail_clip assignment would replace this selection.
+                        prepared=native_automation.prepare_native_split(selected=selected)
                     logger.info('clip=%d cut=%d target=%.9f prepared=%s',
                                 i+1,cut+1,arm['target_beat'],prepared)
                     # Focus/navigation can change selection or transport. Check

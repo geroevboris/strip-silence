@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import app
+import native_automation
 from test_bridge_integration import Clip, Song, Track, ClearSilenceBridge
 import test_bridge_integration as fixture
 
@@ -36,7 +37,7 @@ class AutoPipeline(unittest.TestCase):
                          regions=[dict(start=16.,end=boundary,muted=True),
                                   dict(start=boundary,end=20.,muted=False)])
 
-    def prepare(self):
+    def prepare(self,selected=None):
         self.assertEqual(self.song.focused_views[-1],'Arranger')
         state=self.bridge._auto_job_state
         self.assertIs(self.song.view.selected_track,state['track'])
@@ -66,9 +67,20 @@ class AutoPipeline(unittest.TestCase):
         track.arrangement_clips.append(right)
         self.song.view.detail_clip=right
 
-    def worker(self,prepare=None):
+    def lane(self,track_name):
+        self.assertEqual(track_name,self.song.view.selected_track.name)
+        # Real selection can change time and the displayed clip. It is not an
+        # edit. The bridge must restore ONLY time, then the native marker move
+        # makes the target fragment current.
+        self.song.current_song_time=1234.
+        self.song.view.detail_clip=None
+        self.clicked=True
+        return dict(pid=123,focus='lane click')
+
+    def worker(self,prepare=None,lane=None):
         with patch.object(app,'bridge',self.call), \
                 patch('native_automation.prepare_native_split',prepare or self.prepare), \
+                patch('native_automation.select_native_lane',lane or self.lane), \
                 patch('native_automation.send_native_split',self.split), \
                 patch.object(app.time,'sleep'):
             plan=app.plan_batch(dict(track_indices=list(range(len(self.song.tracks))),strength=50))
@@ -188,6 +200,52 @@ class AutoPipeline(unittest.TestCase):
         self.song.record_mode=True
         with self.assertRaisesRegex(RuntimeError,'запись'):
             self.call('auto_arm')
+
+    def test_disabled_split_recovers_lane_then_restores_exact_position(self):
+        self.song.tracks[0].view.is_collapsed=True
+        def prepare(selected=None):
+            if selected is None:
+                raise native_automation.SplitUnavailable('CS_SPLIT_DISABLED')
+            self.assertTrue(self.clicked)
+            self.assertFalse(self.song.tracks[0].view.is_collapsed)
+            self.assertIsNone(self.song.view.detail_clip)  # bridge did not reset UI
+            state=self.bridge._auto_job_state
+            self.assertEqual(self.song.current_song_time,state['pending'])
+            self.song.view.detail_clip=state['pending_clip']
+            return dict(pid=123,focus='AXStaticText: Arrangement Editor')
+        result=self.worker(prepare)
+        self.assertEqual(result['state'],'done',result)
+        self.assertGreater(self.sent,0)
+        self.assertTrue(self.song.tracks[0].view.is_collapsed)
+
+    def test_lane_click_selecting_wrong_track_is_rejected_before_split(self):
+        def prepare(selected=None):
+            raise native_automation.SplitUnavailable('CS_SPLIT_DISABLED')
+        def wrong_lane(track_name):
+            result=self.lane(track_name)
+            self.song.view.selected_track=object()
+            return result
+        result=self.worker(prepare,wrong_lane)
+        self.assertEqual(result['state'],'error')
+        self.assertIn('Клик выбрал другую дорожку',result['message'])
+        self.assertEqual(self.sent,0)
+
+    def test_disabled_split_after_recovery_does_not_repeat_click_or_edit(self):
+        calls=[]
+        def prepare(selected=None):
+            calls.append(selected)
+            raise native_automation.SplitUnavailable('CS_SPLIT_DISABLED')
+        result=self.worker(prepare)
+        self.assertEqual(result['state'],'error')
+        self.assertEqual(len(calls),2)
+        self.assertEqual(self.sent,0)
+
+    def test_position_only_ack_cannot_authorize_split(self):
+        self.begin();self.call('auto_arm')
+        self.song.view.detail_clip=None
+        self.assertTrue(self.call('auto_confirm',position_only=True)['confirmed'])
+        with self.assertRaisesRegex(RuntimeError,'не подтверждены'):
+            self.call('auto_verify')
 
     def test_older_auto_protocol_is_rejected(self):
         with patch.object(app,'bridge',return_value=dict(protocol=9,actions=['auto_begin'],version='0.6.0')):

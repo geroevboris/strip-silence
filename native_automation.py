@@ -1,7 +1,8 @@
 """Two-phase native Split: activate Arrangement, then dispatch after bridge ACK.
 
 Physical macOS key codes work with Russian as well as Latin input sources.
-The Edit menu's Cmd+E command must be enabled. No mouse coordinates, audio
+When no editable lane is selected, a measured AX header/editor click initializes it.
+The Edit menu's Cmd+E command must be enabled. No fixed screen coordinates, audio
 rendering, clipboard operations or synthetic clip reconstruction are used.
 """
 import subprocess
@@ -17,13 +18,26 @@ on splitCommand(targetApp)
                         set commandChar to value of attribute "AXMenuItemCmdChar" of commandItem
                         set commandMods to value of attribute "AXMenuItemCmdModifiers" of commandItem
                         if (commandChar is "e" or commandChar is "E") and commandMods is 0 then
-                            if not (enabled of commandItem) then
-                                error "CS_SPLIT_DISABLED: " & (name of commandItem) number -2701
+                            -- Cocoa menu validation may be stale until opened.
+                            if not (frontmost of targetApp) then error "CS_FOCUS_LOST"
+                            click barItem
+                            delay 0.1
+                            try
+                                set canSplit to enabled of commandItem
+                                set commandTitle to name of commandItem
+                            on error messageText number errorNumber
+                                key code 53
+                                error messageText number errorNumber
+                            end try
+                            key code 53
+                            delay 0.1
+                            if not canSplit then
+                                error "CS_SPLIT_DISABLED: " & commandTitle number -2701
                             end if
                             return commandItem
                         end if
                     on error messageText number errorNumber
-                        if errorNumber is -2701 then error messageText number errorNumber
+                        if errorNumber is -2701 or messageText contains "CS_FOCUS_LOST" then error messageText number errorNumber
                     end try
                 end repeat
             end if
@@ -45,10 +59,74 @@ on focusDescription(targetApp)
     end tell
 end focusDescription
 
+on elementText(theElement)
+    set pieces to ""
+    tell application "System Events"
+        repeat with attributeName in {"AXTitle", "AXDescription", "AXValue"}
+            try
+                set partText to value of attribute (contents of attributeName) of theElement as text
+                set pieces to pieces & " | " & partText
+            end try
+        end repeat
+    end tell
+    return pieces
+end elementText
+
+on selectContentLane(targetApp, expectedTrack)
+    tell application "System Events"
+        key code 19 using {option down}
+        delay 0.15
+        -- Live documents Escape as focus-to-highlighted-track-title.
+        key code 53
+        delay 0.15
+        set titleElement to value of attribute "AXFocusedUIElement" of targetApp
+        set titleInfo to my elementText(titleElement)
+        if expectedTrack is "" or titleInfo does not contain expectedTrack then
+            error "CS_LANE_HEADER: expected " & expectedTrack & "; focused " & titleInfo
+        end if
+        set titlePosition to position of titleElement
+        set titleSize to size of titleElement
+        key code 19 using {option down}
+        delay 0.15
+        set editorElement to value of attribute "AXFocusedUIElement" of targetApp
+        set editorPosition to position of editorElement
+        set editorSize to size of editorElement
+        set editorInfo to my elementText(editorElement)
+        if editorInfo does not contain "Arrangement Editor" then
+            error "CS_LANE_EDITOR: " & editorInfo
+        end if
+        set editorX to item 1 of editorPosition
+        set editorY to item 2 of editorPosition
+        set editorW to item 1 of editorSize
+        set editorH to item 2 of editorSize
+        set titleY to item 2 of titlePosition
+        set titleH to item 2 of titleSize
+        if editorW < 160 or editorH < 45 or titleH < 1 then
+            error "CS_LANE_BOUNDS: " & editorInfo
+        end if
+        -- A compact AX title label ends above the waveform. A full-height
+        -- track header has its centre aligned with the content lane.
+        if titleH < 32 then
+            set laneY to titleY + titleH + 8
+        else
+            set laneY to titleY + titleH / 2
+        end if
+        set laneX to editorX + editorW * 0.4
+        if laneY <= editorY + 3 or laneY >= editorY + editorH - 3 then
+            error "CS_LANE_OFFSCREEN: title is outside the visible Arrangement editor."
+        end if
+        if not (frontmost of targetApp) then error "CS_FOCUS_LOST"
+        click at {laneX as integer, laneY as integer}
+        delay 0.15
+        return "lane click " & (laneX as integer) & "," & (laneY as integer) & "; " & titleInfo
+    end tell
+end selectContentLane
+
 on run argv
     set phase to item 1 of argv
     set expectedPID to item 2 of argv as integer
     set expectedFocus to item 3 of argv
+    set expectedTrack to item 4 of argv
     tell application "System Events"
         set liveApps to (every application process whose bundle identifier is "com.ableton.live")
         if (count of liveApps) is 0 then
@@ -63,23 +141,29 @@ on run argv
         set targetApp to item 1 of liveApps
         set livePID to unix id of targetApp
         if expectedPID is not 0 and livePID is not expectedPID then error "CS_LIVE_CHANGED"
-        if phase is "prepare" then
+        if phase is "prepare" or phase is "lane" then
             set frontmost of targetApp to true
             delay 0.2
         end if
         if not (frontmost of targetApp) then error "CS_FOCUS_LOST: Ableton Live is not frontmost."
         if phase is "prepare" then
             -- Live 12: focus Arrangement and activate its standby selection.
-            key code 19 using {option down}
-            delay 0.15
+            if expectedPID is 0 then
+                key code 19 using {option down}
+                delay 0.15
+            end if
             if not (frontmost of targetApp) then error "CS_FOCUS_LOST"
             -- Move INSERT marker to the exact playhead set by the bridge.
             key code 49 using {command down, shift down}
             delay 0.15
-        else if phase is not "split" then
+        else if phase is not "split" and phase is not "lane" then
             error "Unknown Clear Silence automation phase."
         end if
     end tell
+    if phase is "lane" then
+        set laneInfo to my selectContentLane(targetApp, expectedTrack)
+        return (livePID as text) & tab & laneInfo
+    end if
     set focusInfo to my focusDescription(targetApp)
     if phase is "split" and focusInfo is not expectedFocus then error "CS_FOCUS_LOST: editor changed"
     try
@@ -87,6 +171,7 @@ on run argv
     on error messageText number errorNumber
         error messageText & " [" & focusInfo & "]" number errorNumber
     end try
+    if (my focusDescription(targetApp)) is not focusInfo then error "CS_FOCUS_LOST: menu did not restore editor"
     if phase is "split" then
         tell application "System Events"
             if not (frontmost of targetApp) then error "CS_FOCUS_LOST"
@@ -99,13 +184,17 @@ end run
 '''
 
 
-def _run_phase(phase, expected_pid=0, expected_focus="", run=None, platform=None):
+class SplitUnavailable(RuntimeError):
+    """Menu was refreshed but the Arrangement selection cannot be split yet."""
+
+
+def _run_phase(phase, expected_pid=0, expected_focus="", expected_track="", run=None, platform=None):
     if (sys.platform if platform is None else platform) != 'darwin':
         raise RuntimeError('Автоматический Split требует macOS.')
     runner = subprocess.run if run is None else run
     try:
         result = runner(['/usr/bin/osascript', '-e', APPLESCRIPT,
-                         phase, str(int(expected_pid)), expected_focus],
+                         phase, str(int(expected_pid)), expected_focus, expected_track],
                         capture_output=True, text=True, timeout=22, check=False)
     except subprocess.TimeoutExpired:
         # Never resend Cmd+E: it may have already reached Live.
@@ -121,8 +210,12 @@ def _run_phase(phase, expected_pid=0, expected_focus="", run=None, platform=None
                 'не разрешено', '-1743', '-1719')):
             raise RuntimeError('macOS не разрешает управление Live. Разреши Clear Silence: '
                                'Универсальный доступ и Автоматизация → System Events. ' + details)
-        if 'CS_SPLIT_DISABLED' in details or 'CS_SPLIT_MISSING' in details:
-            raise RuntimeError('Live не разрешил Split в Arrangement. ' + details)
+        if 'CS_SPLIT_DISABLED' in details:
+            raise SplitUnavailable('Live не разрешил Split в Arrangement. ' + details)
+        if 'CS_SPLIT_MISSING' in details:
+            raise RuntimeError('Live не предоставил команду Split. ' + details)
+        if 'CS_LANE_' in details:
+            raise RuntimeError('Не удалось выбрать полосу нужной дорожки. ' + details)
         if 'CS_FOCUS_LOST' in details or 'CS_LIVE_CHANGED' in details:
             raise RuntimeError('Фокус Live изменился; Split не отправлен. ' + details)
         raise RuntimeError('AppleScript не смог выполнить %s: %s' % (phase, details))
@@ -137,9 +230,15 @@ def _run_phase(phase, expected_pid=0, expected_focus="", run=None, platform=None
             'phase': phase}
 
 
-def prepare_native_split(run=None, platform=None):
+def select_native_lane(track_name, run=None, platform=None):
+    """Click only after validating the live AX title and editor geometry."""
+    return _run_phase('lane', expected_track=track_name, run=run, platform=platform)
+
+
+def prepare_native_split(selected=None, run=None, platform=None):
     """Focus the editor and place the insert marker; never split here."""
-    return _run_phase('prepare', run=run, platform=platform)
+    return _run_phase('prepare', expected_pid=selected['pid'] if selected else 0,
+                      run=run, platform=platform)
 
 
 def send_native_split(prepared=None, run=None, platform=None):

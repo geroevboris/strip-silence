@@ -15,9 +15,9 @@ class TestNativeAutomation(unittest.TestCase):
             return SimpleNamespace(returncode=0,stdout='491\tAXGroup: Arrangement\n',stderr='')
         prepared=native.prepare_native_split(run=pretend,platform='darwin')
         self.assertEqual(prepared['pid'],491)
-        self.assertEqual(calls[0][0][-3:],['prepare','0',''])
+        self.assertEqual(calls[0][0][-4:],['prepare','0','',''])
         native.send_native_split(prepared,run=pretend,platform='darwin')
-        self.assertEqual(calls[1][0][-3:],['split','491','AXGroup: Arrangement'])
+        self.assertEqual(calls[1][0][-4:],['split','491','AXGroup: Arrangement',''])
         script=calls[0][0][2]
         self.assertIn('key code 19 using {option down}',script)
         self.assertIn('key code 49 using {command down, shift down}',script)
@@ -25,6 +25,27 @@ class TestNativeAutomation(unittest.TestCase):
         self.assertNotIn('keystroke "e"',script)
         self.assertIn('AXMenuItemCmdModifiers',script)
         self.assertIn('enabled of commandItem',script)
+
+    def test_lane_phase_passes_track_name_as_data_and_uses_observed_geometry(self):
+        calls=[]
+        def pretend(args,**kwargs):
+            calls.append(args)
+            return SimpleNamespace(returncode=0,stdout='491\tAX lane clicked',stderr='')
+        title='Голос "Катя"; $(echo anything)'
+        selected=native.select_native_lane(title,run=pretend,platform='darwin')
+        self.assertEqual(calls[0][-4:],['lane','0','',title])
+        native.prepare_native_split(selected=selected,run=pretend,platform='darwin')
+        self.assertEqual(calls[1][-4:],['prepare','491','',''])
+        self.assertIn('position of titleElement',native.APPLESCRIPT)
+        self.assertIn('size of editorElement',native.APPLESCRIPT)
+        self.assertLess(native.APPLESCRIPT.index('click barItem'),
+                        native.APPLESCRIPT.index('set canSplit to enabled'))
+
+    def test_only_disabled_menu_has_recoverable_exception(self):
+        def disabled(*args,**kwargs):
+            return SimpleNamespace(returncode=1,stdout='',stderr='CS_SPLIT_DISABLED: Split')
+        with self.assertRaises(native.SplitUnavailable):
+            native.prepare_native_split(run=disabled,platform='darwin')
 
     def test_permission_failure_mentions_controls(self):
         def blocked(*args,**kwargs):

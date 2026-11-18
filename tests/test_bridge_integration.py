@@ -42,6 +42,7 @@ class Track:
     has_audio_input=True;is_frozen=False
     def __init__(self,clips):
         self.name='Sound';self.arrangement_clips=clips;self.clip_slots=[Slot()]
+        self.view=types.SimpleNamespace(is_collapsed=False)
         self.mute=False;self.fail_next_duplicate=False;self.ignore_content_markers=False
     def duplicate_clip_to_arrangement(self,session,beat):
         if self.fail_next_duplicate:
@@ -109,7 +110,7 @@ class TestClearSilenceBridge(unittest.TestCase):
                 def work():
                     try:
                         s=app.bridge('status')
-                        assert s['protocol']==10 and 'auto_begin' in s['actions']
+                        assert s['protocol']==11 and 'auto_begin' in s['actions']
                         profile=app.clip_profile({'track_index':0,'clip_index':0})
                         assert len(profile['peaks'])>100
                         if scenario=='preview':

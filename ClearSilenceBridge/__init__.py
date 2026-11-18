@@ -14,7 +14,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.6.1'
+VERSION = '0.6.2'
 
 
 def create_instance(c_instance):
@@ -128,7 +128,7 @@ class ClearSilenceBridge(ControlSurface):
         if action == 'status':
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': len(song.tracks),
                     'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo')),
-                    'protocol': 10, 'actions': ['status', 'list', 'preview', 'auto_begin', 'auto_arm', 'auto_confirm', 'auto_verify', 'auto_finish', 'auto_abort']}
+                    'protocol': 11, 'actions': ['status', 'list', 'preview', 'auto_begin', 'auto_arm', 'auto_lane', 'auto_reposition', 'auto_confirm', 'auto_verify', 'auto_finish', 'auto_abort']}
         if action == 'list':
             tracks = []
             for ti, track in enumerate(song.tracks):
@@ -181,6 +181,10 @@ class ClearSilenceBridge(ControlSurface):
             return self._auto_begin(song, req)
         if action == 'auto_arm':
             return self._auto_arm(song, req)
+        if action == 'auto_lane':
+            return self._auto_lane(song, req)
+        if action == 'auto_reposition':
+            return self._auto_reposition(song, req)
         if action == 'auto_confirm':
             return self._auto_confirm(song, req)
         if action == 'auto_verify':
@@ -188,7 +192,7 @@ class ClearSilenceBridge(ControlSurface):
         if action == 'auto_finish':
             return self._auto_finish(song, req)
         if action == 'auto_abort':
-            self._auto_job_state = None
+            self._auto_release()
             return {'ok': True, 'aborted': True}
         if action == 'split_mute':
             raise RuntimeError('Старый ненадёжный способ разрезания отключён.')
@@ -405,17 +409,53 @@ class ClearSilenceBridge(ControlSurface):
         return {'ok':True,'target_beat':target,
                 'cut':state['index']+1,'total':len(state['cuts'])}
 
+    def _auto_lane(self, song, req):
+        state=self._auto_state(song)
+        if state['pending'] is None:
+            raise RuntimeError('Нет ожидающего разреза.')
+        track=state['track']
+        # Only the no-selection recovery needs a visible waveform row.
+        if 'collapsed_before' not in state:
+            state['collapsed_before']=bool(track.view.is_collapsed)
+        track.view.is_collapsed=False
+        song.view.selected_track=track
+        self.application().view.focus_view('Arranger')
+        state['confirmed']=False
+        return {'ok':True,'track_name':str(track.name)}
+
+    def _auto_reposition(self, song, req):
+        state=self._auto_state(song)
+        if state['pending'] is None:
+            raise RuntimeError('Нет ожидающего разреза.')
+        if song.view.selected_track!=state['track']:
+            raise RuntimeError('Клик выбрал другую дорожку; Split не отправлен.')
+        # A genuine lane click can move transport and detail_clip. Restore only
+        # the playhead: touching selection/focus here destroys the real click.
+        state['confirmed']=False
+        song.current_song_time=state['pending']
+        return {'ok':True,'target_beat':state['pending']}
+
+    def _auto_release(self):
+        state=getattr(self,'_auto_job_state',None)
+        try:
+            if state and 'collapsed_before' in state:
+                state['track'].view.is_collapsed=state['collapsed_before']
+        finally:
+            self._auto_job_state=None
+
     def _auto_confirm(self, song, req):
         state=self._auto_state(song)
         if state['pending'] is None:
             raise RuntimeError('Нет ожидающего разреза.')
         if song.view.selected_track!=state['track']:
             raise RuntimeError('В Arrangement выбрана другая дорожка; Split не отправлен.')
-        if song.view.detail_clip!=state['pending_clip']:
+        position_only=bool(req.get('position_only',False))
+        if not position_only and song.view.detail_clip!=state['pending_clip']:
             raise RuntimeError('В Arrangement выбран другой клип; Split не отправлен.')
         observed=float(song.current_song_time)
-        state['confirmed']=abs(observed-state['pending'])<=state['tolerance']
-        return {'ok':True,'confirmed':state['confirmed'],
+        confirmed=abs(observed-state['pending'])<=state['tolerance']
+        state['confirmed']=confirmed and not position_only
+        return {'ok':True,'confirmed':confirmed,
                 'target_beat':state['pending'],'observed_beat':observed}
 
     def _auto_verify(self, song, req):
@@ -465,7 +505,7 @@ class ClearSilenceBridge(ControlSurface):
                 raise
         finally:
             song.end_undo_step()
-        self._auto_job_state=None
+        self._auto_release()
         return {'ok':True,'created':len(clips),'muted':sum(int(r[2]) for r in regions)}
 
     def _native_test_track(self, song):
