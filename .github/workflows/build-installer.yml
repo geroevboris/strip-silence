@@ -13,6 +13,10 @@ on:
       - 'ClearSilenceBridge/**'
       - 'tests/**'
   workflow_dispatch:
+  # Repeat a failed macOS runner allocation without manual intervention.
+  # Release-check below stops retries once v0.5.2 is published.
+  schedule:
+    - cron: '23 1,7,13,19 * * *'
 
 permissions:
   contents: write
@@ -28,8 +32,21 @@ jobs:
     name: Check Python sources and tests (Ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      published: ${{ steps.release_check.outputs.published }}
     steps:
       - uses: actions/checkout@v4
+      - name: Stop scheduled retries after installer is released
+        id: release_check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && gh release view 'v0.5.2-probe' >/dev/null 2>&1; then
+            echo 'published=true' >> "$GITHUB_OUTPUT"
+            echo 'v0.5.2 already published; macOS job is no longer needed.'
+          else
+            echo 'published=false' >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -44,6 +61,7 @@ jobs:
     # allocating a runner. Try the distinct, officially supported macOS 26
     # Apple Silicon pool while keeping the release architecture arm64.
     needs: source-tests
+    if: needs.source-tests.outputs.published != 'true'
     runs-on: macos-26
     timeout-minutes: 40
     steps:
