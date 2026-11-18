@@ -13,7 +13,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.5.7'
+VERSION = '0.6.0'
 
 
 def create_instance(c_instance):
@@ -127,7 +127,7 @@ class ClearSilenceBridge(ControlSurface):
         if action == 'status':
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': len(song.tracks),
                     'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo')),
-                    'protocol': 8, 'actions': ['status', 'list', 'preview', 'split_mute', 'probe_region', 'native_prepare', 'native_arm', 'native_confirm', 'native_verify', 'native_cleanup']}
+                    'protocol': 9, 'actions': ['status', 'list', 'preview', 'auto_begin', 'auto_arm', 'auto_confirm', 'auto_verify', 'auto_finish', 'auto_abort']}
         if action == 'list':
             tracks = []
             for ti, track in enumerate(song.tracks):
@@ -176,8 +176,21 @@ class ClearSilenceBridge(ControlSurface):
             return self._native_verify(song, req)
         if action == 'native_cleanup':
             return self._native_cleanup(song, req)
+        if action == 'auto_begin':
+            return self._auto_begin(song, req)
+        if action == 'auto_arm':
+            return self._auto_arm(song, req)
+        if action == 'auto_confirm':
+            return self._auto_confirm(song, req)
+        if action == 'auto_verify':
+            return self._auto_verify(song, req)
+        if action == 'auto_finish':
+            return self._auto_finish(song, req)
+        if action == 'auto_abort':
+            self._auto_job_state = None
+            return {'ok': True, 'aborted': True}
         if action == 'split_mute':
-            return self._split_mute(song, req)
+            raise RuntimeError('Старый ненадёжный способ разрезания отключён.')
         if action == 'replace':
             raise RuntimeError('Старый режим с удалением клипов отключён. Обнови Clear Silence.')
         if action == 'preview':
@@ -246,6 +259,166 @@ class ClearSilenceBridge(ControlSurface):
                 raise
             return {'ok': True, 'created': count, 'track_name': str(new_track.name), 'muted': True}
         return {'ok': False, 'error': 'Unknown action'}
+
+    def _auto_fingerprint(self, song, ignored_track=None):
+        return tuple((str(t.name), tuple(
+            (str(c.file_path) if c.is_audio_clip else 'MIDI',
+             round(float(c.start_time), 4), round(float(c.end_time), 4),
+             bool(c.muted)) for c in t.arrangement_clips))
+            for t in song.tracks if t != ignored_track)
+
+    def _auto_clips(self, state, song):
+        track = song.tracks[state['track_index']]
+        clips = sorted((c for c in track.arrangement_clips
+            if c.is_audio_clip
+            and str(c.file_path) == state['path']
+            and float(c.start_time) >= state['start']-.02
+            and float(c.end_time) <= state['end']+.02),
+            key=lambda c: float(c.start_time))
+        if not clips:
+            raise RuntimeError('Исходная запись не обнаружена в Arrangement.')
+        if (abs(float(clips[0].start_time)-state['start']) > .025 or
+                abs(float(clips[-1].end_time)-state['end']) > .025):
+            raise RuntimeError('Временные границы исходного клипа изменились.')
+        if any(abs(float(a.end_time)-float(b.start_time)) > .025
+               for a,b in zip(clips,clips[1:])):
+            raise RuntimeError('Между фрагментами образовался разрыв.')
+        return clips
+
+    def _auto_state(self, song):
+        state = getattr(self, '_auto_job_state', None)
+        if state is None:
+            raise RuntimeError('Обработка не подготовлена.')
+        ti=state['track_index']
+        if ti >= len(song.tracks) or str(song.tracks[ti].name) != state['track_name']:
+            raise RuntimeError('Обрабатываемая дорожка была изменена.')
+        return state
+
+    def _auto_begin(self, song, req):
+        """Prepare native splits on an ORIGINAL Arrangement clip."""
+        if song.is_playing or song.record_mode:
+            raise RuntimeError('Останови воспроизведение и запись.')
+        if getattr(self, '_auto_job_state', None) is not None:
+            raise RuntimeError('Предыдущая обработка не завершена.')
+        ti = int(req['track_index'])
+        source = req['source']
+        regions = req['regions']
+        if not 0 <= ti < len(song.tracks) or not 1 <= len(regions) <= 120:
+            raise RuntimeError('Неверная дорожка или число регионов.')
+        track = song.tracks[ti]
+        if str(track.name) != req['track_name']:
+            raise RuntimeError('Дорожка переименована после анализа.')
+        start,end=float(source['start']),float(source['end'])
+        if end-start < .06:
+            raise RuntimeError('Слишком короткий исходный клип.')
+        if abs(float(regions[0]['start'])-start) > .03 or abs(float(regions[-1]['end'])-end) > .03:
+            raise RuntimeError('Неполное покрытие исходного клипа.')
+        if any(float(r['end'])-float(r['start']) < .025 for r in regions):
+            raise RuntimeError('Слишком короткий регион.')
+        if any(abs(float(left['end'])-float(right['start'])) > .025
+               for left,right in zip(regions,regions[1:])):
+            raise RuntimeError('Регионы не стыкуются.')
+        matching=[c for c in track.arrangement_clips
+            if c.is_audio_clip and str(c.file_path)==source['file_path']
+            and abs(float(c.start_time)-start) < .02
+            and abs(float(c.end_time)-end) < .02]
+        if len(matching)!=1:
+            raise RuntimeError('Исходный клип не найден или неоднозначен. Обнови список.')
+        original=matching[0]
+        if original.warping or original.looping:
+            raise RuntimeError('Warp/Loop не поддерживаются.')
+        view=getattr(song,'view',None)
+        if view is None:
+            raise RuntimeError('Live не предоставляет управление Arrangement.')
+        # Select target ONCE; never overwrite UI selection at every split.
+        view.selected_track=track
+        try:
+            view.detail_clip=original
+        except Exception:
+            pass
+        cuts=[float(r['end']) for r in regions[:-1]]
+        self._auto_job_state={
+            'track_index':ti,'track_name':str(track.name),
+            'path':source['file_path'],'start':start,'end':end,
+            'regions':[(float(r['start']),float(r['end']),bool(r['muted'])) for r in regions],
+            'cuts':list(reversed(cuts)),'index':0,'pending':None,
+            'confirmed':False,'baseline':self._auto_fingerprint(song,track)}
+        return {'ok':True,'cuts':len(cuts),'regions':len(regions)}
+
+    def _auto_arm(self, song, req):
+        state=self._auto_state(song)
+        if state['pending'] is not None:
+            raise RuntimeError('Предыдущий разрез ещё не проверен.')
+        if state['index']>=len(state['cuts']):
+            raise RuntimeError('Все точки уже обработаны.')
+        track=song.tracks[state['track_index']]
+        if song.view.selected_track != track:
+            song.view.selected_track=track
+        clips=self._auto_clips(state,song)
+        if len(clips)!=state['index']+1:
+            raise RuntimeError('Неожиданное число фрагментов в Arrangement.')
+        target=state['cuts'][state['index']]
+        if not any(float(c.start_time)<target-.02 and float(c.end_time)>target+.02 for c in clips):
+            raise RuntimeError('Нужная точка уже вне доступного клипа.')
+        state['pending']=target
+        state['confirmed']=False
+        song.current_song_time=target
+        return {'ok':True,'target_beat':round(target,6),
+                'cut':state['index']+1,'total':len(state['cuts'])}
+
+    def _auto_confirm(self, song, req):
+        state=self._auto_state(song)
+        if state['pending'] is None:
+            raise RuntimeError('Нет ожидающего разреза.')
+        observed=float(song.current_song_time)
+        target=state['pending']
+        state['confirmed']=abs(observed-target)<.02
+        return {'ok':True,'confirmed':state['confirmed'],
+                'target_beat':round(target,6),'observed_beat':round(observed,6)}
+
+    def _auto_verify(self, song, req):
+        state=self._auto_state(song)
+        if state['pending'] is None or not state['confirmed']:
+            raise RuntimeError('Playhead не подтверждён.')
+        track=song.tracks[state['track_index']]
+        if self._auto_fingerprint(song,track) != state['baseline']:
+            raise RuntimeError('Изменились другие дорожки, обработка остановлена.')
+        clips=self._auto_clips(state,song)
+        expected=state['index']+2
+        if len(clips)!=expected:
+            return {'ok':True,'verified':False,'count':len(clips),'expected':expected}
+        boundaries=[float(c.end_time) for c in clips[:-1]]
+        target=state['pending']
+        if not any(abs(b-target)<=.06 for b in boundaries):
+            raise RuntimeError('Разрез не в нужной точке: нужно %.4f, фактически %s'
+                %(target,[round(x,4) for x in boundaries]))
+        if any(c.warping or str(c.file_path)!=state['path'] for c in clips):
+            raise RuntimeError('После Split изменился исходный аудиофайл.')
+        state['index']+=1
+        state['pending']=None
+        state['confirmed']=False
+        return {'ok':True,'verified':True,'count':len(clips),
+                'completed':state['index'],'total':len(state['cuts'])}
+
+    def _auto_finish(self, song, req):
+        state=self._auto_state(song)
+        if state['pending'] is not None or state['index']!=len(state['cuts']):
+            raise RuntimeError('Не все разрезы подтверждены.')
+        clips=self._auto_clips(state,song)
+        regions=state['regions']
+        if len(clips)!=len(regions):
+            raise RuntimeError('Не совпадает число фрагментов.')
+        for clip,(start,end,muted) in zip(clips,regions):
+            if abs(float(clip.start_time)-start)>.065 or abs(float(clip.end_time)-end)>.065:
+                raise RuntimeError('Границы не соответствуют анализу; Mute не применён.')
+        count=0
+        for clip,(start,end,muted) in zip(clips,regions):
+            clip.muted=muted
+            if bool(clip.muted)!=muted:
+                raise RuntimeError('Live не подтвердил Mute.')
+            count+=int(muted)
+        self._auto_job_state=None
+        return {'ok':True,'created':len(clips),'muted':count}
 
     def _native_test_track(self, song):
         state = getattr(self, '_native_test_state', None)
