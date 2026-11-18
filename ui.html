@@ -1,4 +1,4 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Clear Silence 0.5.2</title>
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Clear Silence 0.5.3</title>
 <style>
 :root{color-scheme:dark;font:13px/1.4 -apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;background:#101318;color:#f6f7fb;--cyan:#12e4f4;--pink:#ff4668;--edge:#343d4a;--muted:#9ca8b8}
 *{box-sizing:border-box}body{margin:0;padding:12px;width:100%;min-width:415px}button,select,input{font:inherit}button{border-radius:9px;background:#292f38;border:1px solid #414b56;color:#e9edf4;padding:8px 10px;cursor:pointer}button:disabled{opacity:.37;cursor:default}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}.title{display:flex;gap:10px;align-items:center;margin-bottom:10px}.symbol{border-radius:8px;border:1px solid #284a57;background:#102e35;color:var(--cyan);padding:8px;font-size:14px;font-weight:850;letter-spacing:-.5px;line-height:1}.title strong{font-size:16px;letter-spacing:.25px}.title small{display:block;color:var(--muted);font-size:10px}#status{margin-left:auto;text-align:right;color:#b4bdc9;max-width:150px;font-size:10px}#status.error{color:var(--pink)}
@@ -8,19 +8,22 @@
 <header class="title"><span class="symbol">CS</span><span><strong>Clear Silence</strong><small>Не удаляет аудио · v0.5.1 beta</small></span><span id="status">Подключение…</span></header>
 <section class="card"><div class="hrow"><span class="label">ОБЛАСТЬ</span><button onclick="refresh()" title="Обновить проект" aria-label="Обновить проект">↻</button></div><div class="toggle"><button data-mode="current" onclick="setMode('current')">Дорожка</button><button data-mode="all" onclick="setMode('all')">Все</button><button data-mode="custom" onclick="setMode('custom')">Выбрать…</button></div><div class="scope" id="scopeLabel">Читаю Arrangement…</div><div id="customPanel"></div></section>
 <section class="card"><div class="hrow"><span class="label">ПРЕДПРОСМОТР</span><span style="font-size:10px;color:var(--muted)">Без изменений проекта</span></div><select id="clipPick" aria-label="Клип для просмотра" onchange="previewClip()"><option>Поиск клипов…</option></select><div class="wave"><canvas id="waveform" aria-label="Бирюзовым — остаётся, ярко-розовым — будет заглушено"></canvas></div><div class="legend"><span><i class="swatch"></i>Остаётся</span><span><i class="swatch mute"></i>Заглушается</span></div><div id="metrics">Выбери клип</div></section>
-<section class="card"><div class="strength"><span class="label">СТЕПЕНЬ ОЧИСТКИ</span><strong id="level">50%</strong></div><input id="strength" aria-label="Мягче или жёстче" type="range" min="0" max="100" step="1" value="50"><div class="hints"><span>◀ Мягче</span><span>Жёстче ▶</span></div><p class="caption">Крути регулятор: предпросмотр изменяется сразу. Применение к дорожкам пока заблокировано.</p><button id="probe" class="primary" onclick="probe()" disabled>Проверить нарезку безопасно</button><div id="log">Совместимость пока не подтверждена. Кнопка не обрабатывает исходные клипы.</div></section>
+<section class="card"><div class="strength"><span class="label">СТЕПЕНЬ ОЧИСТКИ</span><strong id="level">50%</strong></div><input id="strength" aria-label="Мягче или жёстче" type="range" min="0" max="100" step="1" value="50"><div class="hints"><span>◀ Мягче</span><span>Жёстче ▶</span></div><p class="caption">Ручка показывает предварительную разметку. Обработка мультитрека пока заблокирована.</p><button id="probe" class="primary" onclick="nativePrepare()" disabled>1. Подготовить тест Split</button>
+<div class="hrow" style="gap:7px;margin-top:8px">
+<button id="nativeVerify" onclick="nativeVerify()" disabled style="flex:1">2. Проверить Split + Mute</button>
+<button id="nativeClean" onclick="nativeClean()" disabled style="flex:1">3. Удалить тест</button></div><div id="log">Тест на отдельной заглушённой дорожке. Исходный проект лучше открыть как копию.</div></section>
 <div class="foot"><span>WAV · Warp OFF · Live 12.4.6</span><button class="link" onclick="quitApp()">Закрыть</button></div>
 <script>
 const $=id=>document.getElementById(id);
-let tracks=[],mode='auto',selectedTrackIndex=null,customIndices=new Set(),initialized=false,running=false,bridgeReady=false,previewData=null,revision=0,job=null;
+let nativeReady=false,tracks=[],mode='auto',selectedTrackIndex=null,customIndices=new Set(),initialized=false,running=false,bridgeReady=false,previewData=null,revision=0,job=null;
 const settings=()=>{const t=Number($('strength').value)/100;return{strength:Number($('strength').value),threshold:Math.round((-62+37*t)*100)/100,min_silence_ms:Math.round(320-230*t),padding_ms:Math.round(75-60*t)}};
 async function api(path,payload){const cfg=payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-ClearSilence-Token':'__CSRF__'},body:JSON.stringify(payload)};const res=await fetch(path,cfg);const data=await res.json();if(!data.ok)throw new Error(data.error||'Ошибка подключения');return data}
 function ids(){if(mode==='all')return tracks.map(x=>x.index);if(mode==='current')return tracks.some(x=>x.index===selectedTrackIndex)?[selectedTrackIndex]:[];return tracks.filter(x=>customIndices.has(x.index)).map(x=>x.index)}
-function updateScope(){document.querySelectorAll('[data-mode]').forEach(x=>x.classList.toggle('active',x.dataset.mode===mode));$('customPanel').classList.toggle('open',mode==='custom');const selected=ids(),matches=tracks.filter(x=>selected.includes(x.index)),total=matches.reduce((sum,x)=>sum+x.clips.length,0);const label=$('scopeLabel');label.classList.toggle('warn',!total);if(mode==='current')label.textContent=matches.length?`${matches[0].name} · ${total} клип.`:'Выбери аудиодорожку в Ableton';else label.textContent=`${selected.length} дор. · ${total} аудиоклип.`;$('probe').disabled=!bridgeReady||!selected.length||running}
+function updateScope(){document.querySelectorAll('[data-mode]').forEach(x=>x.classList.toggle('active',x.dataset.mode===mode));$('customPanel').classList.toggle('open',mode==='custom');const selected=ids(),matches=tracks.filter(x=>selected.includes(x.index)),total=matches.reduce((sum,x)=>sum+x.clips.length,0);const label=$('scopeLabel');label.classList.toggle('warn',!total);if(mode==='current')label.textContent=matches.length?`${matches[0].name} · ${total} клип.`:'Выбери аудиодорожку в Ableton';else label.textContent=`${selected.length} дор. · ${total} аудиоклип.`;$('probe').disabled=!bridgeReady||!selected.length||running;$('nativeVerify').disabled=!bridgeReady||!nativeReady||running;$('nativeClean').disabled=!bridgeReady||!nativeReady||running}
 function drawTracks(){const root=$('customPanel');root.replaceChildren();for(const tr of tracks){const lab=document.createElement('label');lab.className='track';const cb=document.createElement('input');cb.type='checkbox';cb.checked=customIndices.has(tr.index);cb.onchange=()=>{cb.checked?customIndices.add(tr.index):customIndices.delete(tr.index);updateScope();drawPicker()};const sp=document.createElement('span');sp.textContent=tr.name;const note=document.createElement('small');note.textContent=tr.clips.length+' кл.';lab.append(cb,sp,note);root.appendChild(lab)}}
 function setMode(v){mode=v;updateScope();drawPicker()}
 function drawPicker(){const pick=$('clipPick'),previous=pick.value;pick.replaceChildren();for(const tr of tracks){if(!ids().includes(tr.index))continue;for(const clip of tr.clips){const option=document.createElement('option');option.value=tr.index+':'+clip.index;option.textContent=tr.name+' / '+clip.name;pick.appendChild(option)}}if([...pick.options].some(o=>o.value===previous))pick.value=previous;previewClip()}
-async function refresh(){if(running)return;try{const s=await api('/api/status');bridgeReady=s.protocol===5&&Array.isArray(s.actions)&&s.actions.includes('probe_region')&&s.can_replace;const r=await api('/api/list');tracks=r.tracks||[];selectedTrackIndex=Number.isInteger(r.selected_track_index)?r.selected_track_index:null;if(!initialized){mode=tracks.some(x=>x.index===selectedTrackIndex)?'current':'all';customIndices=new Set(tracks.map(x=>x.index));initialized=true}else{customIndices=new Set([...customIndices].filter(n=>tracks.some(t=>t.index===n)));if(mode==='current'&&!tracks.some(x=>x.index===selectedTrackIndex))mode='all'}drawTracks();updateScope();drawPicker();$('status').className=bridgeReady?'':'error';$('status').textContent=bridgeReady?'● Live подключён':'Требуется новый Bridge';$('log').textContent=bridgeReady?'Проверим способ нарезки на временной дорожке. Оригинал не изменится.':'Установи v0.5.2 и полностью перезапусти Ableton (старый скрипт отключён).'}catch(e){bridgeReady=false;tracks=[];$('status').className='error';$('status').textContent='Live не подключён';$('log').className='error';$('log').textContent=e.message;updateScope();drawPicker()}}
+async function refresh(){if(running)return;try{const s=await api('/api/status');bridgeReady=s.protocol===6&&Array.isArray(s.actions)&&s.actions.includes('native_prepare')&&s.actions.includes('native_verify')&&s.actions.includes('native_cleanup');const r=await api('/api/list');tracks=r.tracks||[];selectedTrackIndex=Number.isInteger(r.selected_track_index)?r.selected_track_index:null;if(!initialized){mode=tracks.some(x=>x.index===selectedTrackIndex)?'current':'all';customIndices=new Set(tracks.map(x=>x.index));initialized=true}else{customIndices=new Set([...customIndices].filter(n=>tracks.some(t=>t.index===n)));if(mode==='current'&&!tracks.some(x=>x.index===selectedTrackIndex))mode='all'}drawTracks();updateScope();drawPicker();$('status').className=bridgeReady?'':'error';$('status').textContent=bridgeReady?'● Live подключён':'Требуется новый Bridge';$('log').textContent=bridgeReady?'Подготовь тест, в Ableton нажми Cmd+E на тестовом клипе, затем проверь результат.':'Установи v0.5.3 и полностью перезапусти Ableton (старый скрипт отключён).'}catch(e){bridgeReady=false;tracks=[];$('status').className='error';$('status').textContent='Live не подключён';$('log').className='error';$('log').textContent=e.message;updateScope();drawPicker()}}
 function formatTime(seconds){seconds=Math.max(0,seconds||0);return Math.floor(seconds/60)+':'+('0'+Math.floor(seconds%60)).slice(-2)}
 function computeKept(profile,strength){if(!profile||!profile.peaks)return[];const opts=settings(),{peaks,hop,rate,first_frame,end_frame}=profile,threshold=Math.pow(10,opts.threshold/20);let first=null,last=null,ranges=[];for(let k=0;k<peaks.length;k++){if(peaks[k]>=threshold){if(first===null)first=k;last=k+1}else if(first!==null&&(k-last+1)*hop*1000/rate>=opts.min_silence_ms){ranges.push([first,last]);first=null;last=null}}if(first!==null)ranges.push([first,last]);const pad=Math.round(rate*opts.padding_ms/1000),active=[];for(const [a,b] of ranges){const left=Math.max(first_frame,first_frame+a*hop-pad),right=Math.min(end_frame,first_frame+b*hop+pad);if(active.length&&left<=active[active.length-1][1])active[active.length-1][1]=Math.max(active[active.length-1][1],right);else active.push([left,right])}return active.map(([a,b])=>[(a-first_frame)/rate,(b-first_frame)/rate])}
 function drawWave(){const cvs=$('waveform'),width=Math.max(50,cvs.getBoundingClientRect().width),height=110,dpr=window.devicePixelRatio||1;cvs.width=Math.round(width*dpr);cvs.height=Math.round(height*dpr);const ctx=cvs.getContext('2d');ctx.scale(dpr,dpr);ctx.fillStyle='#090e15';ctx.fillRect(0,0,width,height);if(!previewData)return;const duration=previewData.duration||1,kept=computeKept(previewData),wave=previewData.waveform||[];
@@ -31,28 +34,39 @@ const sorted=[...wave].sort((a,b)=>a-b),scale=Math.max(.03,sorted[Math.floor(sor
 const keptTime=kept.reduce((n,[a,b])=>n+b-a,0),mutedTime=Math.max(0,duration-keptTime);$('metrics').textContent=`Бирюзовое: ${keptTime.toFixed(2)} с · Заглушится: ${mutedTime.toFixed(2)} с`}
 async function previewClip(){const value=$('clipPick').value,rev=++revision;if(!/^\d+:\d+$/.test(value)){previewData=null;drawWave();$('metrics').textContent='Нет доступного клипа';return}const [ti,ci]=value.split(':').map(Number);$('metrics').textContent='Загружаю осциллограмму…';try{const p=await api('/api/clip/profile',{track_index:ti,clip_index:ci});if(rev!==revision)return;previewData=p;drawWave()}catch(e){if(rev!==revision)return;previewData=null;drawWave();$('metrics').textContent='Нет предпросмотра: '+e.message}}
 $('strength').addEventListener('input',()=>{$('level').textContent=$('strength').value+'%';drawWave()});window.addEventListener('resize',drawWave);
-async function probe(){
- if(running||!bridgeReady)return;
+async function nativePrepare(){
+ if(running||!bridgeReady||nativeReady)return;
  const val=$('clipPick').value;
- if(!/^\d+:\d+$/.test(val)){$('log').textContent='Выбери аудиоклип для проверки.';return}
- const [ti,ci]=val.split(':').map(Number);
- running=true;updateScope();
- $('log').className='';
- $('log').textContent='Проверяю реальные границы на временной заглушённой дорожке…';
+ if(!/^\d+:\d+$/.test(val)){$('log').textContent='Выбери WAV-клип.';return}
+ const [track_index,clip_index]=val.split(':').map(Number);
+ running=true;updateScope();$('log').className='';
  try{
-  const r=await api('/api/region/probe',{track_index:ti,clip_index:ci});
-  const lines=[r.supported?'Один из вариантов подтверждён.':'Ни один способ не подтвердился.',
-   'Ожидаемый конец клипа: '+r.expected_end+' долей'];
-  for(const item of r.results){
-    lines.push(item.method+': '+(item.ok?'OK':'не совпало')+
-      (item.error?' · '+item.error:' · начало '+item.start+' / конец '+item.end+
-       ' · разница '+item.difference_beats+' долей'));
-  }
-  lines.push('Временная дорожка удалена: '+(r.original_tracks_unchanged?'да':'нет'));
-  lines.push('Исходный клип не изменялся. Пришли скриншот этого отчёта.');
-  $('log').textContent=lines.join('\n');
- }catch(e){$('log').className='error';$('log').textContent='Проверка не удалась: '+e.message+
- '\nИсходный клип не должен был измениться. Если осталась временная дорожка — не сохраняй Live Set.'}
+  const r=await api('/api/native/prepare',{track_index,clip_index});
+  nativeReady=true;
+  $('log').textContent='Тестовая дорожка: '+r.track_name+
+   '\n1. Перейди в Ableton Arrangement.\n2. Кликни ВНУТРИ тестового клипа на заглушённой дорожке.\n3. Нажми Cmd+E.\n4. Вернись сюда и нажми «Проверить Split + Mute».';
+ }catch(e){$('log').className='error';$('log').textContent='Подготовка не удалась: '+e.message}
+ finally{running=false;updateScope()}
+}
+async function nativeVerify(){
+ if(running||!bridgeReady||!nativeReady)return;
+ running=true;updateScope();$('log').className='';
+ try{
+  const r=await api('/api/native/verify',{});
+  $('log').textContent=r.passed?
+   'OK: нативный Split создал два клипа с тем же исходным WAV. Правая часть заглушена. Попробуй её размьютить и растянуть, затем удали тестовую дорожку. Граница: '+r.boundary+' долей.':
+   'Пока не подтверждено. '+r.message;
+  if(!r.passed)$('log').className='error';
+ }catch(e){$('log').className='error';$('log').textContent='Ошибка проверки: '+e.message}
+ finally{running=false;updateScope()}
+}
+async function nativeClean(){
+ if(running||!bridgeReady||!nativeReady)return;
+ running=true;updateScope();$('log').className='';
+ try{
+  const r=await api('/api/native/cleanup',{});
+  nativeReady=false;$('log').textContent=r.message;
+ }catch(e){$('log').className='error';$('log').textContent='Тест не удалён: '+e.message}
  finally{running=false;updateScope()}
 }
 async function quitApp(){if(running){alert('Сначала заверши обработку.');return}try{await api('/api/shutdown',{});if(window.pywebview&&window.pywebview.api)await window.pywebview.api.close()}catch(e){$('log').textContent=e.message}}
