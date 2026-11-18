@@ -1,20 +1,13 @@
-# Clear Silence
+# Clear Silence v0.5.4 — native auto Split diagnostic
 
-Clear Silence is a local macOS Apple Silicon utility for Ableton Live 12.
+**Experimental diagnostic only, NOT working multitrack Strip Silence.** The user already confirmed that manual Cmd+E on a new muted test track creates two clips pointing to the original full WAV, and the right clip can be muted, unmuted and extended again.
 
-## v0.5.3 — native Arrangement Split test
+This version tests keyboard automation of the native command using macOS System Events, still only on a muted temporary test track. It does not cut/overwrite WAVs and original Arrangement clips are not intended to change.
 
-**This is a diagnostic beta, not a working multitrack Strip Silence release.** Real Live 12.4.6 showed that changing Clip.loop_end/start_marker/end_marker did not resize the Arrangement clip. The old bulk editing path is deliberately blocked.
+On a COPY of your Live Set: install PKG, launch Clear Silence to update the MIDI Remote Script, fully restart Live, select an unwarped/unlooped WAV, click **1. Подготовить тест Split**, select the *temporary test clip* in Live Arrangement, return to Clear Silence and click **2. Авто Split**. The bridge sets Live playhead to a target beat; macOS sends **Cmd+Shift+Space** to move the insert marker to the playhead, then **Cmd+E**. The bridge reads the real clip boundaries, checks the exact cut point and other tracks, and mutes the right test clip only if all checks pass. Check unmuting/revealing audio then click **3. Удалить тест**.
 
-In this build:
-1. Select an original unwarped/unlooped WAV in Clear Silence.
-2. Click **1. Подготовить тест Split**. The bridge creates a *new muted temporary Arrangement track* containing the **full original WAV**.
-3. In Ableton Arrangement, **click inside that test clip** and press **Cmd+E** to invoke Live's native Split.
-4. Return to Clear Silence, click **2. Проверить Split + Mute**. The bridge verifies the two adjacent regions refer to the same WAV with no gap, and sets `Clip.muted` on the right **test clip**.
-5. Try unmuting / extending the right clip in Live. Click **3. Удалить тест** to remove the test track.
+macOS Accessibility permission for Clear Silence / osascript may be required. If automation fails, manually split with Cmd+E and click **Проверить вручную**. If a non-test clip changes, do not save the copy of the Live Set; inspect Undo.
 
-**Use a COPY of the Live Set** for diagnostic testing. This prototype does not programmatically invoke Cmd+E yet; it isolates and verifies the native command before automation. It does not edit the selected original WAV or its Arrangement clips. No truncated WAV files are generated.
+**Bulk operation on original tracks is still disabled.** The test must pass in real Ableton Live 12.4.6 before we build multi-boundary and multitrack processing.
 
-Development issue: https://github.com/geroevboris/strip-silence/issues/1
-
-[Russian instructions](README_RU.md).
+Project acceptance criteria: https://github.com/geroevboris/strip-silence/issues/1
