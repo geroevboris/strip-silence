@@ -1,13 +1,20 @@
 # Clear Silence
 
-Independent, local Ableton Live 12 utility for macOS (Apple Silicon).
+Clear Silence is a local macOS Apple Silicon utility for Ableton Live 12.
 
-**v0.5.2 is a safety-first compatibility probe, NOT a functioning bulk Strip Silence release.** The previous v0.5.1 produced Arrangement clips of incorrect length in real Live and aborted via Undo.
+## v0.5.3 — native Arrangement Split test
 
-This build adds **Test region trimming**: using the currently chosen audio clip, the Remote Script creates a temporary *muted* audio track, tries both direct Arrangement placement and Session-to-Arrangement placement, changes region markers **after** placement, reads back the actual start/end times, and cleans up the temporary track. Your original audio track and WAV are not touched. Bulk editing is disabled until these real-world results establish a safe technique.
+**This is a diagnostic beta, not a working multitrack Strip Silence release.** Real Live 12.4.6 showed that changing Clip.loop_end/start_marker/end_marker did not resize the Arrangement clip. The old bulk editing path is deliberately blocked.
 
-Install the PKG, restart Live, select `ClearSilenceBridge` as a Control Surface, select one WAV clip without Warp, and use **Проверить нарезку безопасно**. Please provide the resulting report.
+In this build:
+1. Select an original unwarped/unlooped WAV in Clear Silence.
+2. Click **1. Подготовить тест Split**. The bridge creates a *new muted temporary Arrangement track* containing the **full original WAV**.
+3. In Ableton Arrangement, **click inside that test clip** and press **Cmd+E** to invoke Live's native Split.
+4. Return to Clear Silence, click **2. Проверить Split + Mute**. The bridge verifies the two adjacent regions refer to the same WAV with no gap, and sets `Clip.muted` on the right **test clip**.
+5. Try unmuting / extending the right clip in Live. Click **3. Удалить тест** to remove the test track.
 
-Long-term requirement: non-destructive Split + Mute of silent intervals, with every region referencing the full source audio. See [issue #1](https://github.com/geroevboris/strip-silence/issues/1).
+**Use a COPY of the Live Set** for diagnostic testing. This prototype does not programmatically invoke Cmd+E yet; it isolates and verifies the native command before automation. It does not edit the selected original WAV or its Arrangement clips. No truncated WAV files are generated.
 
-[Russian setup and limitations](README_RU.md).
+Development issue: https://github.com/geroevboris/strip-silence/issues/1
+
+[Russian instructions](README_RU.md).
