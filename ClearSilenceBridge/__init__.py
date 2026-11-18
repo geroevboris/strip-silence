@@ -13,7 +13,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.5.3'
+VERSION = '0.5.4'
 
 
 def create_instance(c_instance):
@@ -127,7 +127,7 @@ class ClearSilenceBridge(ControlSurface):
         if action == 'status':
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': len(song.tracks),
                     'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo')),
-                    'protocol': 6, 'actions': ['status', 'list', 'preview', 'split_mute', 'probe_region', 'native_prepare', 'native_verify', 'native_cleanup']}
+                    'protocol': 7, 'actions': ['status', 'list', 'preview', 'split_mute', 'probe_region', 'native_prepare', 'native_arm', 'native_verify', 'native_cleanup']}
         if action == 'list':
             tracks = []
             for ti, track in enumerate(song.tracks):
@@ -168,6 +168,8 @@ class ClearSilenceBridge(ControlSurface):
             return self._probe_region(song, req)
         if action == 'native_prepare':
             return self._native_prepare(song, req)
+        if action == 'native_arm':
+            return self._native_arm(song, req)
         if action == 'native_verify':
             return self._native_verify(song, req)
         if action == 'native_cleanup':
@@ -316,6 +318,53 @@ class ClearSilenceBridge(ControlSurface):
             self._native_test_state = None
             raise
 
+    def _native_arm(self, song, req):
+        """Position playhead inside the temporary test clip, before UI Split."""
+        if song.is_playing or song.record_mode:
+            raise RuntimeError('Останови воспроизведение и запись.')
+        state, track = self._native_test_track(song)
+        clips = list(track.arrangement_clips)
+        if len(clips) != 1:
+            raise RuntimeError('На тестовой дорожке должен быть один клип.')
+        clip = clips[0]
+        if (not clip.is_audio_clip or clip.warping or
+                str(clip.file_path) != state['path'] or
+                abs(float(clip.start_time)-state['start']) > .005 or
+                abs(float(clip.end_time)-state['end']) > .005):
+            raise RuntimeError('Тестовый клип изменился. Не отправляю клавиши.')
+        view = getattr(song, 'view', None)
+        if view is None:
+            raise RuntimeError('Live не предоставляет выбор дорожки.')
+        view.selected_track = track
+        view.detail_clip = clip
+        if view.selected_track != track:
+            raise RuntimeError('Невозможно выбрать тестовую дорожку.')
+        duration = state['end'] - state['start']
+        if duration <= .2:
+            raise RuntimeError('Слишком короткий тестовый клип.')
+        target = state['start'] + min(4.0, duration / 2.0)
+        song.current_song_time = target
+        if abs(float(song.current_song_time) - target) > .01:
+            raise RuntimeError('Не удалось поставить playhead в нужную точку.')
+        state['auto_boundary'] = target
+        # Record other tracks, so a GUI action cannot silently affect them.
+        state['other_snapshot'] = tuple(
+            (str(t.name), tuple(
+                (str(cl.file_path) if cl.is_audio_clip else 'MIDI',
+                 round(float(cl.start_time), 4),
+                 round(float(cl.end_time), 4),
+                 bool(cl.muted)) for cl in t.arrangement_clips))
+            for t in song.tracks if t != track)
+        try:
+            from Live import Application
+            application = Application.get_application()
+            application.view.show_view('Arranger')
+            application.view.focus_view('Arranger')
+        except Exception:
+            pass
+        return {'ok': True, 'target_beat': round(target, 5),
+                'test_track_name': state['name']}
+
     def _native_verify(self, song, req):
         """Check real split timeline, then mute the right TEST clip only."""
         state, track = self._native_test_track(song)
@@ -327,6 +376,18 @@ class ClearSilenceBridge(ControlSurface):
                            for c in source_track.arrangement_clips)):
             raise RuntimeError('Исходная дорожка неожиданно изменилась. '
                                'Проверь проект до сохранения.')
+        before = state.get('other_snapshot')
+        if before is not None:
+            after = tuple(
+                (str(t.name), tuple(
+                    (str(cl.file_path) if cl.is_audio_clip else 'MIDI',
+                     round(float(cl.start_time), 4),
+                     round(float(cl.end_time), 4),
+                     bool(cl.muted)) for cl in t.arrangement_clips))
+                for t in song.tracks if t != track)
+            if after != before:
+                raise RuntimeError('GUI изменила другую дорожку! '
+                                   'Не сохраняй проект; проверь Undo.')
         clips = sorted(track.arrangement_clips, key=lambda c: float(c.start_time))
         if len(clips) != 2:
             return {'ok': True, 'passed': False, 'count': len(clips),
@@ -339,7 +400,9 @@ class ClearSilenceBridge(ControlSurface):
                  and abs(float(right.end_time)-state['end']) < .005
                  and abs(float(left.end_time)-float(right.start_time)) < .005
                  and float(left.end_time)-float(left.start_time) > .05
-                 and float(right.end_time)-float(right.start_time) > .05)
+                 and float(right.end_time)-float(right.start_time) > .05
+                 and ('auto_boundary' not in state or
+                      abs(float(right.start_time)-state['auto_boundary']) < .06))
         if not valid:
             return {'ok': True, 'passed': False, 'count': 2,
                     'message': 'Два клипа есть, но границы не совпадают '
