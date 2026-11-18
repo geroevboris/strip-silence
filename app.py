@@ -483,7 +483,7 @@ if __name__ == '__main__':
     t.start()
     try:
         window = webview.create_window('Clear Silence', 'http://127.0.0.1:%d' % WEB_PORT,
-                                       width=460, height=650, min_size=(420, 600),
+                                       width=460, height=670, min_size=(420, 660),
                                        js_api=NativeWindowApi())
         webview.start(gui='cocoa', debug=False)
     finally:
