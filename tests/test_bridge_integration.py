@@ -7,6 +7,7 @@ frame=types.ModuleType('_Framework'); surf=types.ModuleType('_Framework.ControlS
 class ControlSurface:
     def __init__(self,c):self._song=c
     def song(self):return self._song
+    def application(self):return self._song.application
     def log_message(self,*a):pass
     def update_display(self):pass
     def disconnect(self):pass
@@ -64,6 +65,9 @@ class Song:
         self.tempo=120.;self.tracks=[Track([Clip(path)])]
         self.is_playing=False;self.record_mode=False
         self.current_song_time=0.
+        self.focused_views=[]
+        self.application=types.SimpleNamespace(view=types.SimpleNamespace(
+            focus_view=self.focused_views.append))
         self.view=types.SimpleNamespace(selected_track=None,detail_clip=None)
     def create_audio_track(self,i):self.tracks.insert(i,Track([]))
     def delete_track(self,i):self.tracks.pop(i)
@@ -105,7 +109,7 @@ class TestClearSilenceBridge(unittest.TestCase):
                 def work():
                     try:
                         s=app.bridge('status')
-                        assert s['protocol']==9 and 'auto_begin' in s['actions']
+                        assert s['protocol']==10 and 'auto_begin' in s['actions']
                         profile=app.clip_profile({'track_index':0,'clip_index':0})
                         assert len(profile['peaks'])>100
                         if scenario=='preview':
@@ -168,7 +172,7 @@ class TestClearSilenceBridge(unittest.TestCase):
         # CI cannot synthesize native macOS keystrokes. Ensure Linux refuses
         # and never modifies the original WAV/Arrangement clip.
         # Native CI runners include macOS, but must never send live keystrokes.
-        with patch('native_automation.send_native_split',
+        with patch('native_automation.prepare_native_split',
                    side_effect=RuntimeError('Автоматизация отключена в тесте')):
             song,status,path=self._run('wrong_length',one_clip=True)
         self.assertEqual(status['state'],'error',status)
@@ -206,7 +210,8 @@ class TestClearSilenceBridge(unittest.TestCase):
                 ]
                 started=bridge._execute({'action':'auto_begin',
                     'track_index':0,'track_name':'Sound',
-                    'source':{'file_path':path,'start':16.,'end':20.},
+                    'tempo':120.,'rate':24000,
+                    'source':{'file_path':path,'start':16.,'end':20.,'file_offset':0.,'file_end':2.},
                     'regions':regions})
                 self.assertEqual(started['cuts'],3)
                 for boundary in (18.4,17.8,16.6):
@@ -218,6 +223,8 @@ class TestClearSilenceBridge(unittest.TestCase):
                               if c.start_time < boundary < c.end_time)
                     right=copy.copy(left)
                     right.start_time=boundary
+                    right.loop_start=(boundary-16.)/2
+                    left.loop_end=right.loop_start
                     left.end_time=boundary
                     track.arrangement_clips.append(right)
                     verified=bridge._execute({'action':'auto_verify'})
@@ -242,7 +249,8 @@ class TestClearSilenceBridge(unittest.TestCase):
             try:
                 bridge._execute({'action':'auto_begin',
                     'track_index':0,'track_name':'Sound',
-                    'source':{'file_path':path,'start':16.,'end':20.},
+                    'tempo':120.,'rate':24000,
+                    'source':{'file_path':path,'start':16.,'end':20.,'file_offset':0.,'file_end':2.},
                     'regions':[{'start':16.,'end':18.,'muted':True},
                                {'start':18.,'end':20.,'muted':False}]})
                 bridge._execute({'action':'auto_arm'})
@@ -251,6 +259,8 @@ class TestClearSilenceBridge(unittest.TestCase):
                 right=copy.copy(left)
                 left.end_time=19.
                 right.start_time=19.
+                right.loop_start=1.5
+                left.loop_end=1.5
                 song.tracks[0].arrangement_clips.append(right)
                 with self.assertRaisesRegex(RuntimeError,'не в нужной точке'):
                     bridge._execute({'action':'auto_verify'})

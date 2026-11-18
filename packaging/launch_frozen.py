@@ -27,7 +27,7 @@ if '--self-test' in sys.argv:
     import audio
     import native_automation
     import webview
-    assert app.APP_VERSION == '0.6.0'
+    assert app.APP_VERSION == '0.6.1'
     assert app.HTML.startswith('<!doctype html>')
     assert callable(native_automation.send_native_split)
     assert callable(audio.WavFile)

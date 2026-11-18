@@ -15,7 +15,7 @@ on:
       - 'tests/**'
   workflow_dispatch:
   # Repeat a failed macOS runner allocation without manual intervention.
-  # Release-check below stops retries once v0.6.0 is published.
+  # Release-check below stops retries once v0.6.1 is published.
   schedule:
     - cron: '23 1,7,13,19 * * *'
 
@@ -42,9 +42,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && gh release view 'v0.6.0-auto-strip' >/dev/null 2>&1; then
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && gh release view 'v0.6.1-arrangement-focus' >/dev/null 2>&1; then
             echo 'published=true' >> "$GITHUB_OUTPUT"
-            echo 'v0.6.0 already published; macOS job is no longer needed.'
+            echo 'v0.6.1 already published; macOS job is no longer needed.'
           else
             echo 'published=false' >> "$GITHUB_OUTPUT"
           fi
@@ -92,7 +92,7 @@ jobs:
       - name: Upload PKG to workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Clear-Silence-v0.6.0-auto-strip-macOS-Apple-Silicon
+          name: Clear-Silence-v0.6.1-arrangement-focus-macOS-Apple-Silicon
           path: |
             package-output/*.pkg
             package-output/*.sha256
@@ -101,14 +101,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG='v0.6.0-auto-strip'
-          PKG='package-output/Clear_Silence_0.6.0_macOS_Apple_Silicon.pkg'
+          TAG='v0.6.1-arrangement-focus'
+          PKG='package-output/Clear_Silence_0.6.1_macOS_Apple_Silicon.pkg'
           SUM="${PKG}.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$PKG" "$SUM" --clobber
           else
             gh release create "$TAG" "$PKG" "$SUM" \
               --target "$GITHUB_SHA" \
-              --title 'Clear Silence v0.6.0 probe — automatic Arrangement split' \
-              --notes 'First full automatic Strip Silence beta: user selects audio tracks and strength, app analyzes all quiet regions, sends native Ableton Cmd+E at every computed boundary, verifies all region boundaries in Live and mutes only silence. Original WAV preserved. Requires macOS Accessibility permission. GUI focus across multiple consecutive cuts must be validated on target Live 12.4.6, test on a copy of the Set. Unsigned and unnotarized.'
+              --title 'Clear Silence v0.6.1 — Arrangement focus and verified Split + Mute' \
+              --notes-file RELEASE_NOTES.md
           fi

@@ -8,6 +8,8 @@ import sys
 import threading
 import time
 import uuid
+import logging
+from logging.handlers import RotatingFileHandler
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from audio import WavFile
@@ -19,7 +21,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.6.0'
+APP_VERSION = '0.6.1'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -55,8 +57,8 @@ def bridge(action, **args):
 def require_replace_bridge():
     """Fail BEFORE creating files or editing Live when the installed script is old."""
     status = bridge('status')
-    if status.get('protocol') != 9 or 'auto_begin' not in status.get('actions', []):
-        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.6.0.' % status.get('version', 'неизвестен'))
+    if status.get('protocol') != 10 or 'auto_begin' not in status.get('actions', []):
+        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.6.1.' % status.get('version', 'неизвестен'))
     if not status.get('can_replace', False):
         raise RuntimeError('Live не предоставил безопасные операции Undo. Разделение клипов отключено.')
     return status
@@ -378,6 +380,19 @@ def _auto_native_worker(job_id, plan):
         with lock:
             jobs[job_id].update(kw)
 
+    logger=logging.getLogger('ClearSilence.automation')
+    if not logger.handlers:
+        try:
+            folder=os.path.expanduser('~/Library/Logs/ClearSilence')
+            os.makedirs(folder,exist_ok=True)
+            handler=RotatingFileHandler(os.path.join(folder,'automation.log'),
+                                        maxBytes=1000000,backupCount=2,encoding='utf-8')
+            handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+        except OSError:
+            logger.addHandler(logging.NullHandler())
+    logger.info('job=%s app=%s clips=%d',job_id,APP_VERSION,len(plan['entries']))
     done = 0
     entries = plan['entries']
     try:
@@ -407,7 +422,8 @@ def _auto_native_worker(job_id, plan):
             update(current=i+1,message='Обрабатываю: %s · %d регионов' %
                     (e['label'],len(ranges)))
             bridge('auto_begin',track_index=e['track_index'],
-                   track_name=e['track_name'],source=origin,regions=ranges)
+                   track_name=e['track_name'],source=origin,regions=ranges,
+                   tempo=e['tempo'],rate=wav.rate)
             try:
                 for cut in range(max(0,len(ranges)-1)):
                     with lock:
@@ -426,7 +442,19 @@ def _auto_native_worker(job_id, plan):
                             'Playhead не достиг позиции %.5f (фактически %.5f).' %
                             (arm['target_beat'],
                              confirmed['observed_beat'] if confirmed else -1))
-                    native_automation.send_native_split()
+                    prepared=native_automation.prepare_native_split()
+                    logger.info('clip=%d cut=%d target=%.9f prepared=%s',
+                                i+1,cut+1,arm['target_beat'],prepared)
+                    # Focus/navigation can change selection or transport. Check
+                    # again AFTER placing the insert marker, before any edit.
+                    ready=bridge('auto_confirm')
+                    if not ready['confirmed']:
+                        raise RuntimeError('Позиция Live изменилась при выборе клипа; Split не отправлен.')
+                    with lock:
+                        canceled=jobs[job_id]['cancel']
+                    if canceled:
+                        raise RuntimeError('Обработка отменена перед разрезом.')
+                    native_automation.send_native_split(prepared=prepared)
                     verified=None
                     for retry in range(12):
                         time.sleep(.16)
@@ -437,9 +465,10 @@ def _auto_native_worker(job_id, plan):
                         raise RuntimeError(
                             'Ableton не разделил клип: разрез %d/%d, '
                             'позиция %.5f, найдено фрагментов %s. '
-                            'Проверь фокус Arrangement.' %
+                            'Live не подтвердил Split после выбора Arrangement.' %
                             (cut+1,len(ranges)-1,arm['target_beat'],
                              verified['count'] if verified else 'неизвестно'))
+                    logger.info('clip=%d cut=%d verified=%s',i+1,cut+1,verified)
                     update(message='%s · разрез %d/%d'%
                            (e['label'],cut+1,len(ranges)-1))
                 result=bridge('auto_finish')
@@ -453,6 +482,7 @@ def _auto_native_worker(job_id, plan):
                     pass
         update(state='done',message='Готово: %d клипов. WAV не изменены.' % done)
     except Exception as exc:
+        logger.exception('job=%s stopped after %d clips',job_id,done)
         update(state='error',errors=[str(exc)],
                message='Остановлено на клипе %d/%d. %s' %
                        (done+1,len(entries),exc))

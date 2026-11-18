@@ -1,6 +1,6 @@
 #!/bin/bash
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
-RESOURCES="$(cd "$(dirname "$0")/../Resources" && pwd)"
+PROJECT="$(cd "$(dirname "$0")/../../.." && pwd)"
 VENV="$HOME/Library/Application Support/ClearSilence/ui-venv/bin/python3"
 mkdir -p "$HOME/Library/Logs"
 LOG="$HOME/Library/Logs/ClearSilence.log"
@@ -8,5 +8,5 @@ if [ ! -x "$VENV" ]; then
   /usr/bin/osascript -e 'display dialog "Clear Silence: сначала один раз запусти 03_SETUP_UI.command для установки компонентов окна." buttons {"OK"} default button 1' >/dev/null 2>&1
   exit 1
 fi
-cd "$RESOURCES" || exit 1
-exec "$VENV" "$RESOURCES/app.py" >> "$LOG" 2>&1
+cd "$PROJECT" || exit 1
+exec "$VENV" "$PROJECT/app.py" >> "$LOG" 2>&1

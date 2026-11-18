@@ -1,6 +1,8 @@
 # Clear Silence installer build
 
-Status: success
-Run: https://github.com/geroevboris/strip-silence/actions/runs/44007166483
-Commit: d9534fb33c4d114930b4b83c30a66ba3ef1df432
-Release: https://github.com/geroevboris/strip-silence/releases/tag/v0.3.2-installer
+Release: 0.6.1
+Workflow: https://github.com/geroevboris/strip-silence/actions/workflows/build-installer.yml
+Release page: https://github.com/geroevboris/strip-silence/releases/tag/v0.6.1-arrangement-focus
+
+Check the workflow for the commit being installed. Packaging and mocked API
+checks do not establish successful editing in an actual Ableton Live instance.
