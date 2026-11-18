@@ -103,7 +103,7 @@ class TestClearSilenceBridge(unittest.TestCase):
                 def work():
                     try:
                         s=app.bridge('status')
-                        assert s['protocol']==5 and 'probe_region' in s['actions']
+                        assert s['protocol']==6 and 'native_prepare' in s['actions']
                         profile=app.clip_profile({'track_index':0,'clip_index':0})
                         assert len(profile['peaks'])>100
                         if scenario=='preview':
@@ -185,6 +185,63 @@ class TestClearSilenceBridge(unittest.TestCase):
         }):
             with self.assertRaisesRegex(RuntimeError, 'старый ClearSilenceBridge'):
                 app.require_replace_bridge()
+
+    def test_native_split_and_mute_on_disposable_track(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=os.path.join(d,'source.wav')
+            self.make_audio(path)
+            song=Song(path)
+            original=song.tracks[0].arrangement_clips[0]
+            bridge=ClearSilenceBridge(song)
+            try:
+                result=bridge._execute({'action':'native_prepare',
+                                        'track_index':0, 'clip_index':0})
+                self.assertTrue(result['ok'],result)
+                self.assertEqual(len(song.tracks),2)
+                temp=song.tracks[1]
+                self.assertTrue(temp.mute)
+                self.assertEqual(len(temp.arrangement_clips),1)
+                # Without a real native GUI split, verification must refuse.
+                pending=bridge._execute({'action':'native_verify'})
+                self.assertFalse(pending['passed'],pending)
+                # Simulate Live's Cmd+E producing two adjacent Arrangement
+                # clips referencing the exact same full source file.
+                left=temp.arrangement_clips[0]
+                right=copy.copy(left)
+                cut=left.start_time+1.
+                right.start_time=cut
+                left.end_time=cut
+                temp.arrangement_clips=[left,right]
+                passed=bridge._execute({'action':'native_verify'})
+                self.assertTrue(passed['passed'],passed)
+                self.assertFalse(left.muted)
+                self.assertTrue(right.muted)
+                self.assertEqual(left.file_path,path)
+                self.assertEqual(right.file_path,path)
+                self.assertIs(song.tracks[0].arrangement_clips[0],original)
+                self.assertEqual((original.start_time,original.end_time),(16.,20.))
+                clean=bridge._execute({'action':'native_cleanup'})
+                self.assertTrue(clean['removed'],clean)
+                self.assertEqual(len(song.tracks),1)
+                self.assertIs(song.tracks[0].arrangement_clips[0],original)
+            finally:
+                bridge.disconnect()
+
+    def test_native_cleanup_refuses_unrelated_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=os.path.join(d,'source.wav')
+            self.make_audio(path)
+            song=Song(path)
+            bridge=ClearSilenceBridge(song)
+            try:
+                bridge._execute({'action':'native_prepare',
+                                 'track_index':0,'clip_index':0})
+                song.tracks[1].arrangement_clips[0].file_path='unrelated.wav'
+                with self.assertRaisesRegex(RuntimeError,'другие клипы'):
+                    bridge._execute({'action':'native_cleanup'})
+                self.assertEqual(len(song.tracks),2)
+            finally:
+                bridge.disconnect()
 
     def test_safe_probe_never_edits_source_clip(self):
         with tempfile.TemporaryDirectory() as d:
