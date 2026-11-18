@@ -19,7 +19,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.5.2'
+APP_VERSION = '0.5.3'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -55,8 +55,8 @@ def bridge(action, **args):
 def require_replace_bridge():
     """Fail BEFORE creating files or editing Live when the installed script is old."""
     status = bridge('status')
-    if status.get('protocol') != 5 or 'split_mute' not in status.get('actions', []):
-        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.5.1.' % status.get('version', 'неизвестен'))
+    if status.get('protocol') != 6 or 'split_mute' not in status.get('actions', []):
+        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.5.3.' % status.get('version', 'неизвестен'))
     if not status.get('can_replace', False):
         raise RuntimeError('Live не предоставил безопасные операции Undo. Разделение клипов отключено.')
     return status
@@ -455,6 +455,12 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(n))
             if self.path == '/api/clip/profile':
                 result = clip_profile(data)
+            elif self.path == '/api/native/prepare':
+                result = bridge('native_prepare', track_index=int(data['track_index']), clip_index=int(data['clip_index']))
+            elif self.path == '/api/native/verify':
+                result = bridge('native_verify')
+            elif self.path == '/api/native/cleanup':
+                result = bridge('native_cleanup')
             elif self.path == '/api/region/probe':
                 result = bridge('probe_region', track_index=int(data['track_index']), clip_index=int(data['clip_index']))
             elif self.path == '/api/clip/visualize':
