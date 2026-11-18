@@ -1,1 +1,7 @@
-Clear Silence v0.5.5 native Split diagnostic. The temporary muted audio clip is now placed at the original Arrangement clip's start beat, not fixed beat 8. Live sometimes returns stale current_song_time in the same callback it was set: the bridge confirms transport time on later callbacks before dispatching Cmd+Shift+Space and Cmd+E. A failed confirmation sends no keyboard shortcuts. Tests include a deferred transport mock. Bulk processing of source tracks remains disabled. Test on a COPY of the Live Set, verify the right half is muted and can be restored, then remove the test track. Project issue: https://github.com/geroevboris/strip-silence/issues/1
+# Clear Silence v0.5.6 — Auto Split diagnostic
+
+This patch fixes a real macOS Monterey process-discovery failure: Ableton Live runs as an application process named **Live**, not necessarily a name containing "Ableton Live". The previous AppleScript returned an invented accessibility suggestion on an AppleScript error -2700.
+
+Now identify by exact bundle identifier com.ableton.live, fallback name Live, and then Ableton Live text, requiring exactly one process before sending Cmd+Shift+Space and Cmd+E. User permissions are already granted. Unit tests distinguish discovery from macOS TCC failures. macOS CI compiles the AppleScript with osacompile before building the PKG.
+
+Still an isolated, muted test-track diagnostic. Do not process source clips. Test on a COPY of a Live Set; bulk operations remain disabled. See issue #1.

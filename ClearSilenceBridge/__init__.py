@@ -13,7 +13,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.5.5'
+VERSION = '0.5.6'
 
 
 def create_instance(c_instance):
