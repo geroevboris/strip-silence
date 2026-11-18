@@ -105,7 +105,7 @@ class TestClearSilenceBridge(unittest.TestCase):
                 def work():
                     try:
                         s=app.bridge('status')
-                        assert s['protocol']==8 and 'native_confirm' in s['actions']
+                        assert s['protocol']==9 and 'auto_begin' in s['actions']
                         profile=app.clip_profile({'track_index':0,'clip_index':0})
                         assert len(profile['peaks'])>100
                         if scenario=='preview':
@@ -187,6 +187,75 @@ class TestClearSilenceBridge(unittest.TestCase):
         }):
             with self.assertRaisesRegex(RuntimeError, 'старый ClearSilenceBridge'):
                 app.require_replace_bridge()
+
+    def test_full_auto_multiple_splits_and_muted_gaps(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=os.path.join(d,'source.wav')
+            self.make_audio(path)
+            song=Song(path)
+            song.view.selected_track=song.tracks[0]
+            bridge=ClearSilenceBridge(song)
+            try:
+                regions=[
+                    {'start':16.,'end':16.6,'muted':True},
+                    {'start':16.6,'end':17.8,'muted':False},
+                    {'start':17.8,'end':18.4,'muted':True},
+                    {'start':18.4,'end':20.,'muted':False},
+                ]
+                started=bridge._execute({'action':'auto_begin',
+                    'track_index':0,'track_name':'Sound',
+                    'source':{'file_path':path,'start':16.,'end':20.},
+                    'regions':regions})
+                self.assertEqual(started['cuts'],3)
+                for boundary in (18.4,17.8,16.6):
+                    armed=bridge._execute({'action':'auto_arm'})
+                    self.assertAlmostEqual(armed['target_beat'],boundary,places=4)
+                    self.assertTrue(bridge._execute({'action':'auto_confirm'})['confirmed'])
+                    track=song.tracks[0]
+                    left=next(c for c in track.arrangement_clips
+                              if c.start_time < boundary < c.end_time)
+                    right=copy.copy(left)
+                    right.start_time=boundary
+                    left.end_time=boundary
+                    track.arrangement_clips.append(right)
+                    verified=bridge._execute({'action':'auto_verify'})
+                    self.assertTrue(verified['verified'],verified)
+                finish=bridge._execute({'action':'auto_finish'})
+                self.assertEqual(finish['created'],4)
+                self.assertEqual(finish['muted'],2)
+                ordered=sorted(song.tracks[0].arrangement_clips,
+                               key=lambda c:c.start_time)
+                self.assertEqual([c.muted for c in ordered],
+                                 [True,False,True,False])
+                self.assertEqual([c.file_path for c in ordered],[path]*4)
+            finally:
+                bridge.disconnect()
+
+    def test_full_auto_wrong_split_does_not_mute(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=os.path.join(d,'source.wav')
+            self.make_audio(path)
+            song=Song(path)
+            bridge=ClearSilenceBridge(song)
+            try:
+                bridge._execute({'action':'auto_begin',
+                    'track_index':0,'track_name':'Sound',
+                    'source':{'file_path':path,'start':16.,'end':20.},
+                    'regions':[{'start':16.,'end':18.,'muted':True},
+                               {'start':18.,'end':20.,'muted':False}]})
+                bridge._execute({'action':'auto_arm'})
+                bridge._execute({'action':'auto_confirm'})
+                left=song.tracks[0].arrangement_clips[0]
+                right=copy.copy(left)
+                left.end_time=19.
+                right.start_time=19.
+                song.tracks[0].arrangement_clips.append(right)
+                with self.assertRaisesRegex(RuntimeError,'не в нужной точке'):
+                    bridge._execute({'action':'auto_verify'})
+                self.assertFalse(left.muted)
+                self.assertFalse(right.muted)
+            finally:
+                bridge.disconnect()
 
     def test_native_split_and_mute_on_disposable_track(self):
         with tempfile.TemporaryDirectory() as d:
