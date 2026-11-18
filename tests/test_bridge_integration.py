@@ -278,7 +278,7 @@ class TestClearSilenceBridge(unittest.TestCase):
                 song.tracks[0].arrangement_clips[0].name='Changed'
                 # Name alone is not the fingerprint; timing modification is.
                 song.tracks[0].arrangement_clips[0].end_time+=1
-                with self.assertRaisesRegex(RuntimeError,'другую дорожку'):
+                with self.assertRaisesRegex(RuntimeError,'Исходная дорожка'):
                     bridge._execute({'action':'native_verify'})
                 bridge._execute({'action':'native_cleanup'})
             finally:
