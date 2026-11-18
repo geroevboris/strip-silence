@@ -2,7 +2,7 @@
 # Build a self-contained native macOS app + real installer package.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VERSION=0.5.3
+VERSION=0.5.4
 OUTPUT_DIR="$PWD/package-output"
 ROOT="$PWD/package-build/root"
 ICONSET="$PWD/package-build/ClearSilence.iconset"
@@ -31,6 +31,7 @@ python3 -m PyInstaller --noconfirm --clean --windowed --onedir \
   --hidden-import app \
   --hidden-import audio \
   --hidden-import silence_math \
+  --hidden-import native_automation \
   packaging/launch_frozen.py
 
 APP="$PWD/dist/$APPNAME"
@@ -44,8 +45,8 @@ p=sys.argv[1]
 with open(p,'rb') as f: d=plistlib.load(f)
 d['CFBundleDisplayName']='Clear Silence'
 d['CFBundleName']='Clear Silence'
-d['CFBundleShortVersionString']='0.5.3'
-d['CFBundleVersion']='0.5.3'
+d['CFBundleShortVersionString']='0.5.4'
+d['CFBundleVersion']='0.5.4'
 d['LSMinimumSystemVersion']='11.0'
 with open(p,'wb') as f: plistlib.dump(d,f)
 PY
