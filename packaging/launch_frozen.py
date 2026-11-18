@@ -26,7 +26,7 @@ if '--self-test' in sys.argv:
     import app
     import audio
     import webview
-    assert app.APP_VERSION == '0.5.2'
+    assert app.APP_VERSION == '0.5.3'
     assert app.HTML.startswith('<!doctype html>')
     assert callable(audio.WavFile)
     assert callable(install_bridge)
