@@ -19,7 +19,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.5.3'
+APP_VERSION = '0.5.4'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -55,8 +55,8 @@ def bridge(action, **args):
 def require_replace_bridge():
     """Fail BEFORE creating files or editing Live when the installed script is old."""
     status = bridge('status')
-    if status.get('protocol') != 6 or 'split_mute' not in status.get('actions', []):
-        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.5.3.' % status.get('version', 'неизвестен'))
+    if status.get('protocol') != 7 or 'split_mute' not in status.get('actions', []):
+        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.5.4.' % status.get('version', 'неизвестен'))
     if not status.get('can_replace', False):
         raise RuntimeError('Live не предоставил безопасные операции Undo. Разделение клипов отключено.')
     return status
@@ -457,6 +457,15 @@ class Handler(BaseHTTPRequestHandler):
                 result = clip_profile(data)
             elif self.path == '/api/native/prepare':
                 result = bridge('native_prepare', track_index=int(data['track_index']), clip_index=int(data['clip_index']))
+            elif self.path == '/api/native/auto':
+                # Never target source clips: bridge arms its tagged test track
+                # and exact beat before the macOS shortcut is dispatched.
+                armed = bridge('native_arm')
+                import native_automation
+                sent = native_automation.send_native_split()
+                result = bridge('native_verify')
+                result['armed_beat'] = armed['target_beat']
+                result['shortcuts_sent'] = sent['sent']
             elif self.path == '/api/native/verify':
                 result = bridge('native_verify')
             elif self.path == '/api/native/cleanup':
