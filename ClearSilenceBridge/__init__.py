@@ -330,12 +330,12 @@ class ClearSilenceBridge(ControlSurface):
         view=getattr(song,'view',None)
         if view is None:
             raise RuntimeError('Live не предоставляет управление Arrangement.')
-        # Select target ONCE; never overwrite UI selection at every split.
-        view.selected_track=track
-        try:
-            view.detail_clip=original
-        except Exception:
-            pass
+        # Preserve an existing waveform selection in Arrangement. Earlier
+        # diagnostic versions accidentally destroyed it by writing
+        # selected_track/detail_clip immediately before Cmd+E.
+        # Only change tracks if the user chose a DIFFERENT track in the UI.
+        if view.selected_track != track:
+            view.selected_track = track
         cuts=[float(r['end']) for r in regions[:-1]]
         self._auto_job_state={
             'track_index':ti,'track_name':str(track.name),
