@@ -3,7 +3,7 @@ const fs=require('fs');
 const path=require('path');
 const root=path.resolve(__dirname,'..');
 (async()=>{
- const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ const browser=await chromium.launch({channel:process.env.UI_BROWSER_CHANNEL || undefined,headless:true,args:['--no-sandbox']});
  const page=await browser.newPage({viewport:{width:460,height:650},deviceScaleFactor:2});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const waveform=Array.from({length:550},(_,i)=>{const t=i/550;return Math.max(.002, Math.sin(t*71)**2*(t>.07&&t<.29||t>.46&&t<.72||t>.82&&t<.92?.35:.003)*(0.4+0.6*Math.sin(i*13)**2))});

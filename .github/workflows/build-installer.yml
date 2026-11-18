@@ -61,8 +61,7 @@ jobs:
       - name: Check interface and capture preview
         run: |
           npm install --prefix "$RUNNER_TEMP/ui-check" playwright@1.58.2
-          "$RUNNER_TEMP/ui-check/node_modules/.bin/playwright" install --with-deps chromium
-          NODE_PATH="$RUNNER_TEMP/ui-check/node_modules" UI_OUTPUT="$RUNNER_TEMP" node tests/check_ui.cjs
+          UI_BROWSER_CHANNEL=chrome NODE_PATH="$RUNNER_TEMP/ui-check/node_modules" UI_OUTPUT="$RUNNER_TEMP" node tests/check_ui.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
