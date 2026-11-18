@@ -164,18 +164,17 @@ class TestClearSilenceBridge(unittest.TestCase):
         self.assertFalse(song.tracks[0].clip_slots[0].has_clip)
         self.assertEqual({c.file_path for c in song.tracks[0].arrangement_clips},{path})
 
-    def test_unverified_split_mute_is_blocked_before_edit(self):
-        # The previous implementation ignored Arrangement length in Live.
-        # The diagnostic release MUST refuse bulk processing until a real
-        # Live compatibility probe has been inspected.
-        song, status, path = self._run('wrong_length', one_clip=True)
-        self.assertEqual(status['state'], 'exception', status)
-        self.assertIn('Пакетная обработка отключена', status['error'])
-        self.assertEqual(len(song.tracks), 1)
-        self.assertEqual(len(song.tracks[0].arrangement_clips), 1)
-        original = song.tracks[0].arrangement_clips[0]
-        self.assertEqual((original.start_time, original.end_time), (16., 20.))
-        self.assertEqual(original.file_path, path)
+    def test_non_macos_automatic_split_fails_without_editing_audio(self):
+        # CI cannot synthesize native macOS keystrokes. Ensure Linux refuses
+        # and never modifies the original WAV/Arrangement clip.
+        song,status,path=self._run('wrong_length',one_clip=True)
+        self.assertEqual(status['state'],'error',status)
+        self.assertIn('требует macOS',status['errors'][0])
+        self.assertEqual(len(song.tracks),1)
+        self.assertEqual(len(song.tracks[0].arrangement_clips),1)
+        original=song.tracks[0].arrangement_clips[0]
+        self.assertEqual((original.start_time,original.end_time),(16.,20.))
+        self.assertEqual(original.file_path,path)
         self.assertFalse(song.tracks[0].clip_slots[0].has_clip)
 
     def test_previous_0_5_bridge_is_refused_before_any_edit(self):
@@ -481,7 +480,7 @@ class TestClearSilenceBridge(unittest.TestCase):
             raise ValueError('old')
         try:
             with patch.object(app,'bridge',old):
-                with self.assertRaisesRegex(RuntimeError,'Пакетная обработка отключена'):
+                with self.assertRaisesRegex(RuntimeError,'старый ClearSilenceBridge'):
                     app.start_batch({'plan_id':'old-bridge'})
             self.assertIs(app.batch_plans['old-bridge'],sentinel)
         finally:
