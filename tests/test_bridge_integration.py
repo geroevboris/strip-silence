@@ -105,7 +105,7 @@ class TestClearSilenceBridge(unittest.TestCase):
                 def work():
                     try:
                         s=app.bridge('status')
-                        assert s['protocol']==7 and 'native_arm' in s['actions']
+                        assert s['protocol']==8 and 'native_confirm' in s['actions']
                         profile=app.clip_profile({'track_index':0,'clip_index':0})
                         assert len(profile['peaks'])>100
                         if scenario=='preview':
@@ -203,6 +203,8 @@ class TestClearSilenceBridge(unittest.TestCase):
                 temp=song.tracks[1]
                 self.assertTrue(temp.mute)
                 self.assertEqual(len(temp.arrangement_clips),1)
+                self.assertEqual(temp.arrangement_clips[0].start_time,
+                                 original.start_time)
                 # Without a real native GUI split, verification must refuse.
                 pending=bridge._execute({'action':'native_verify'})
                 self.assertFalse(pending['passed'],pending)
@@ -242,6 +244,7 @@ class TestClearSilenceBridge(unittest.TestCase):
                 armed=bridge._execute({'action':'native_arm'})
                 beat=armed['target_beat']
                 self.assertAlmostEqual(song.current_song_time,beat,places=4)
+                self.assertTrue(bridge._execute({'action':'native_confirm'})['confirmed'])
                 self.assertIs(song.view.selected_track,song.tracks[1])
                 self.assertIs(song.view.detail_clip,
                               song.tracks[1].arrangement_clips[0])
@@ -265,6 +268,41 @@ class TestClearSilenceBridge(unittest.TestCase):
             finally:
                 bridge.disconnect()
 
+    def test_delayed_playhead_acknowledgement(self):
+        class DeferredSong(Song):
+            def __init__(self, path):
+                self._actual_time = 0.
+                self._pending_time = None
+                super().__init__(path)
+            @property
+            def current_song_time(self):
+                return self._actual_time
+            @current_song_time.setter
+            def current_song_time(self, value):
+                self._pending_time = float(value)
+            def advance_live_tick(self):
+                self._actual_time = self._pending_time
+
+        with tempfile.TemporaryDirectory() as d:
+            path=os.path.join(d,'source.wav')
+            self.make_audio(path)
+            song=DeferredSong(path)
+            bridge=ClearSilenceBridge(song)
+            try:
+                bridge._execute({'action':'native_prepare',
+                                 'track_index':0,'clip_index':0})
+                armed=bridge._execute({'action':'native_arm'})
+                early=bridge._execute({'action':'native_confirm'})
+                self.assertFalse(early['confirmed'])
+                song.advance_live_tick()
+                late=bridge._execute({'action':'native_confirm'})
+                self.assertTrue(late['confirmed'],late)
+                self.assertAlmostEqual(late['target_beat'],
+                                       armed['target_beat'])
+                bridge._execute({'action':'native_cleanup'})
+            finally:
+                bridge.disconnect()
+
     def test_auto_split_detects_changes_to_other_tracks(self):
         with tempfile.TemporaryDirectory() as d:
             path=os.path.join(d,'source.wav')
@@ -275,6 +313,7 @@ class TestClearSilenceBridge(unittest.TestCase):
                 bridge._execute({'action':'native_prepare',
                                  'track_index':0,'clip_index':0})
                 bridge._execute({'action':'native_arm'})
+                self.assertTrue(bridge._execute({'action':'native_confirm'})['confirmed'])
                 song.tracks[0].arrangement_clips[0].name='Changed'
                 # Name alone is not the fingerprint; timing modification is.
                 song.tracks[0].arrangement_clips[0].end_time+=1

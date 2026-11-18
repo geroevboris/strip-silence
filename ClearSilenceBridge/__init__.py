@@ -13,7 +13,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.5.4'
+VERSION = '0.5.5'
 
 
 def create_instance(c_instance):
@@ -127,7 +127,7 @@ class ClearSilenceBridge(ControlSurface):
         if action == 'status':
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': len(song.tracks),
                     'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo')),
-                    'protocol': 7, 'actions': ['status', 'list', 'preview', 'split_mute', 'probe_region', 'native_prepare', 'native_arm', 'native_verify', 'native_cleanup']}
+                    'protocol': 8, 'actions': ['status', 'list', 'preview', 'split_mute', 'probe_region', 'native_prepare', 'native_arm', 'native_confirm', 'native_verify', 'native_cleanup']}
         if action == 'list':
             tracks = []
             for ti, track in enumerate(song.tracks):
@@ -170,6 +170,8 @@ class ClearSilenceBridge(ControlSurface):
             return self._native_prepare(song, req)
         if action == 'native_arm':
             return self._native_arm(song, req)
+        if action == 'native_confirm':
+            return self._native_confirm(song, req)
         if action == 'native_verify':
             return self._native_verify(song, req)
         if action == 'native_cleanup':
@@ -288,7 +290,10 @@ class ClearSilenceBridge(ControlSurface):
             track = song.tracks[index]
             track.name = name
             track.mute = True
-            clip = track.create_audio_clip(path, 8.0)
+            intended_start = float(src.start_time)
+            clip = track.create_audio_clip(path, intended_start)
+            if abs(float(clip.start_time) - intended_start) > 0.005:
+                raise RuntimeError('Тестовый клип оказался не на позиции оригинала.')
             clip.warping = False
             clip.looping = False
             if str(clip.file_path) != path or len(track.arrangement_clips) != 1:
@@ -343,10 +348,11 @@ class ClearSilenceBridge(ControlSurface):
         if duration <= .2:
             raise RuntimeError('Слишком короткий тестовый клип.')
         target = state['start'] + min(4.0, duration / 2.0)
+        # Live may read back the OLD position within this same callback.
+        # Confirm on a later Live tick, via a distinct Bridge request.
         song.current_song_time = target
-        if abs(float(song.current_song_time) - target) > .01:
-            raise RuntimeError('Не удалось поставить playhead в нужную точку.')
         state['auto_boundary'] = target
+        state['auto_confirmed'] = False
         # Record other tracks, so a GUI action cannot silently affect them.
         state['other_snapshot'] = tuple(
             (str(t.name), tuple(
@@ -365,6 +371,19 @@ class ClearSilenceBridge(ControlSurface):
         return {'ok': True, 'target_beat': round(target, 5),
                 'test_track_name': state['name']}
 
+    def _native_confirm(self, song, req):
+        """Read transport position in a SEPARATE Live main-thread callback."""
+        state, track = self._native_test_track(song)
+        if 'auto_boundary' not in state:
+            raise RuntimeError('Точка разреза не подготовлена.')
+        target = float(state['auto_boundary'])
+        observed = float(song.current_song_time)
+        confirmed = abs(observed - target) <= .02
+        state['auto_confirmed'] = confirmed
+        return {'ok': True, 'confirmed': confirmed,
+                'target_beat': round(target, 5),
+                'observed_beat': round(observed, 5)}
+
     def _native_verify(self, song, req):
         """Check real split timeline, then mute the right TEST clip only."""
         state, track = self._native_test_track(song)
@@ -376,6 +395,8 @@ class ClearSilenceBridge(ControlSurface):
                            for c in source_track.arrangement_clips)):
             raise RuntimeError('Исходная дорожка неожиданно изменилась. '
                                'Проверь проект до сохранения.')
+        if 'auto_boundary' in state and not state.get('auto_confirmed', False):
+            raise RuntimeError('Положение playhead не подтверждено. Mute не выполнялся.')
         before = state.get('other_snapshot')
         if before is not None:
             after = tuple(

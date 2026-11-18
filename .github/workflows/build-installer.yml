@@ -15,7 +15,7 @@ on:
       - 'tests/**'
   workflow_dispatch:
   # Repeat a failed macOS runner allocation without manual intervention.
-  # Release-check below stops retries once v0.5.4 is published.
+  # Release-check below stops retries once v0.5.5 is published.
   schedule:
     - cron: '23 1,7,13,19 * * *'
 
@@ -79,7 +79,7 @@ jobs:
       - name: Upload PKG to workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Clear-Silence-v0.5.4-auto-probe-macOS-Apple-Silicon
+          name: Clear-Silence-v0.5.5-auto-probe-macOS-Apple-Silicon
           path: |
             package-output/*.pkg
             package-output/*.sha256
@@ -88,14 +88,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG='v0.5.4-auto-probe'
-          PKG='package-output/Clear_Silence_0.5.4_macOS_Apple_Silicon.pkg'
+          TAG='v0.5.5-auto-probe'
+          PKG='package-output/Clear_Silence_0.5.5_macOS_Apple_Silicon.pkg'
           SUM="${PKG}.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$PKG" "$SUM" --clobber
           else
             gh release create "$TAG" "$PKG" "$SUM" \
               --target "$GITHUB_SHA" \
-              --title 'Clear Silence v0.5.4 probe — automatic Arrangement split' \
-              --notes 'Automatic Split diagnostic: bridge selects a muted temporary audio track and moves Live playhead to the chosen beat. macOS System Events sends Cmd+Shift+Space then Cmd+E. The bridge validates actual regions and mutes only the right test part. Requires macOS Accessibility permission. Bulk processing disabled; test ONLY on a COPY of the Live Set. Unsigned and unnotarized.'
+              --title 'Clear Silence v0.5.5 probe — automatic Arrangement split' \
+              --notes 'Automatic Split diagnostic with deferred playhead confirmation: bridge selects a muted temporary audio track and moves Live playhead to the chosen beat. macOS System Events sends Cmd+Shift+Space then Cmd+E. The bridge validates actual regions and mutes only the right test part. Requires macOS Accessibility permission. Bulk processing disabled; test ONLY on a COPY of the Live Set. Unsigned and unnotarized.'
           fi

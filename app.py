@@ -19,7 +19,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.5.4'
+APP_VERSION = '0.5.5'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -55,8 +55,8 @@ def bridge(action, **args):
 def require_replace_bridge():
     """Fail BEFORE creating files or editing Live when the installed script is old."""
     status = bridge('status')
-    if status.get('protocol') != 7 or 'split_mute' not in status.get('actions', []):
-        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.5.4.' % status.get('version', 'неизвестен'))
+    if status.get('protocol') != 8 or 'split_mute' not in status.get('actions', []):
+        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.5.5.' % status.get('version', 'неизвестен'))
     if not status.get('can_replace', False):
         raise RuntimeError('Live не предоставил безопасные операции Undo. Разделение клипов отключено.')
     return status
@@ -461,6 +461,20 @@ class Handler(BaseHTTPRequestHandler):
                 # Never target source clips: bridge arms its tagged test track
                 # and exact beat before the macOS shortcut is dispatched.
                 armed = bridge('native_arm')
+                # A same-tick read of song.current_song_time can be stale.
+                # Wait for separate Live callbacks before dispatching keys.
+                last = None
+                for _ in range(8):
+                    time.sleep(0.18)
+                    last = bridge('native_confirm')
+                    if last['confirmed']:
+                        break
+                if not last or not last['confirmed']:
+                    raise RuntimeError(
+                        'Live не подтвердил playhead: нужно %.5f доли, '
+                        'фактически %.5f. Cmd+E не отправлена.' % (
+                            armed['target_beat'],
+                            last['observed_beat'] if last else -1))
                 import native_automation
                 sent = native_automation.send_native_split()
                 result = bridge('native_verify')
