@@ -13,7 +13,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.5.1'
+VERSION = '0.5.3'
 
 
 def create_instance(c_instance):
@@ -127,7 +127,7 @@ class ClearSilenceBridge(ControlSurface):
         if action == 'status':
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': len(song.tracks),
                     'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo')),
-                    'protocol': 5, 'actions': ['status', 'list', 'preview', 'split_mute', 'probe_region']}
+                    'protocol': 6, 'actions': ['status', 'list', 'preview', 'split_mute', 'probe_region', 'native_prepare', 'native_verify', 'native_cleanup']}
         if action == 'list':
             tracks = []
             for ti, track in enumerate(song.tracks):
@@ -166,6 +166,12 @@ class ClearSilenceBridge(ControlSurface):
                     'selected_track_index':selected, 'tracks': tracks}
         if action == 'probe_region':
             return self._probe_region(song, req)
+        if action == 'native_prepare':
+            return self._native_prepare(song, req)
+        if action == 'native_verify':
+            return self._native_verify(song, req)
+        if action == 'native_cleanup':
+            return self._native_cleanup(song, req)
         if action == 'split_mute':
             return self._split_mute(song, req)
         if action == 'replace':
@@ -236,6 +242,133 @@ class ClearSilenceBridge(ControlSurface):
                 raise
             return {'ok': True, 'created': count, 'track_name': str(new_track.name), 'muted': True}
         return {'ok': False, 'error': 'Unknown action'}
+
+    def _native_test_track(self, song):
+        state = getattr(self, '_native_test_state', None)
+        if not state:
+            raise RuntimeError('Сначала подготовь тест.')
+        index = state['index']
+        if index >= len(song.tracks):
+            raise RuntimeError('Тестовая дорожка перемещена или удалена. '
+                               'Не изменяю чужие дорожки.')
+        track = song.tracks[index]
+        if track.name != state['name'] or not bool(track.mute):
+            raise RuntimeError('Тестовая дорожка изменена. '
+                               'Не изменяю чужие дорожки.')
+        return state, track
+
+    def _native_prepare(self, song, req):
+        """Create a muted test track for user's real Arrangement Cmd+E."""
+        if song.is_playing or song.record_mode:
+            raise RuntimeError('Останови Live перед тестом.')
+        if getattr(self, '_native_test_state', None):
+            raise RuntimeError('Сначала удали предыдущий тест.')
+        ti, ci = int(req['track_index']), int(req['clip_index'])
+        if not 0 <= ti < len(song.tracks):
+            raise RuntimeError('Исходная дорожка не найдена.')
+        orig_track = song.tracks[ti]
+        if not 0 <= ci < len(orig_track.arrangement_clips):
+            raise RuntimeError('Исходный клип не найден.')
+        src = orig_track.arrangement_clips[ci]
+        if not src.is_audio_clip or src.warping or src.looping:
+            raise RuntimeError('Нужен WAV без Warp и Loop.')
+        path = str(src.file_path)
+        if not os.path.isfile(path):
+            raise RuntimeError('Исходный WAV не найден.')
+        if not callable(getattr(song, 'create_audio_track', None)) or not callable(getattr(song, 'delete_track', None)):
+            raise RuntimeError('Live не поддерживает тест на отдельной дорожке.')
+        index = len(song.tracks)
+        created = False
+        name = 'Clear Silence SPLIT TEST ' + secrets.token_hex(3)
+        try:
+            song.create_audio_track(index)
+            created = True
+            track = song.tracks[index]
+            track.name = name
+            track.mute = True
+            clip = track.create_audio_clip(path, 8.0)
+            clip.warping = False
+            clip.looping = False
+            if str(clip.file_path) != path or len(track.arrangement_clips) != 1:
+                raise RuntimeError('Тестовый клип не совпал с исходным WAV.')
+            self._native_test_state = {
+                'index': index, 'name': name, 'path': path,
+                'start': float(clip.start_time), 'end': float(clip.end_time),
+                'source_index': ti, 'source_count': len(orig_track.arrangement_clips),
+                'source_start': float(src.start_time), 'source_end': float(src.end_time)}
+            try:
+                song.view.selected_track = track
+                song.view.detail_clip = clip
+            except Exception:
+                pass
+            return {'ok': True, 'track_name': name,
+                    'start': float(clip.start_time), 'end': float(clip.end_time),
+                    'message': 'В Ableton найди заглушённую дорожку ' + name +
+                               '. Кликни ВНУТРИ тестового клипа и нажми Cmd+E. '
+                               'Вернись и нажми «Проверить». Исходный клип не менялся.'}
+        except Exception:
+            if created and len(song.tracks) == index + 1:
+                try:
+                    song.delete_track(index)
+                except Exception:
+                    raise RuntimeError('Тестовая дорожка осталась в проекте. '
+                                       'НЕ СОХРАНЯЙ проект.')
+            self._native_test_state = None
+            raise
+
+    def _native_verify(self, song, req):
+        """Check real split timeline, then mute the right TEST clip only."""
+        state, track = self._native_test_track(song)
+        source_track = song.tracks[state['source_index']]
+        if (len(source_track.arrangement_clips) != state['source_count']
+                or not any(c.is_audio_clip and str(c.file_path) == state['path']
+                           and abs(float(c.start_time)-state['source_start']) < .0001
+                           and abs(float(c.end_time)-state['source_end']) < .0001
+                           for c in source_track.arrangement_clips)):
+            raise RuntimeError('Исходная дорожка неожиданно изменилась. '
+                               'Проверь проект до сохранения.')
+        clips = sorted(track.arrangement_clips, key=lambda c: float(c.start_time))
+        if len(clips) != 2:
+            return {'ok': True, 'passed': False, 'count': len(clips),
+                    'message': 'В тестовой дорожке %d клип(ов), нужны два. '
+                               'Выбери точку внутри клипа и нажми Cmd+E.' % len(clips)}
+        left, right = clips
+        valid = (all(c.is_audio_clip and str(c.file_path) == state['path']
+                     and not c.warping for c in clips)
+                 and abs(float(left.start_time)-state['start']) < .005
+                 and abs(float(right.end_time)-state['end']) < .005
+                 and abs(float(left.end_time)-float(right.start_time)) < .005
+                 and float(left.end_time)-float(left.start_time) > .05
+                 and float(right.end_time)-float(right.start_time) > .05)
+        if not valid:
+            return {'ok': True, 'passed': False, 'count': 2,
+                    'message': 'Два клипа есть, но границы не совпадают '
+                               'или изменился исходный аудиофайл.',
+                    'pieces': [{'start': float(c.start_time),
+                                'end': float(c.end_time),
+                                'same_file': str(c.file_path) == state['path']}
+                               for c in clips]}
+        left.muted = False
+        right.muted = True
+        if left.muted or not right.muted:
+            raise RuntimeError('Live не подтвердил Mute.')
+        return {'ok': True, 'passed': True, 'count': 2,
+                'boundary': round(float(right.start_time), 5),
+                'source_file_preserved': True,
+                'message': 'Нативный Split подтверждён: обе части ссылаются '
+                           'на полный исходный WAV. Правая часть заглушена. '
+                           'Можешь размьютить и растянуть её, затем удали тест.'}
+
+    def _native_cleanup(self, song, req):
+        state, track = self._native_test_track(song)
+        if any(not c.is_audio_clip or str(c.file_path) != state['path']
+               for c in track.arrangement_clips):
+            raise RuntimeError('На тестовой дорожке появились другие клипы. '
+                               'Автоматически удалять её небезопасно.')
+        song.delete_track(state['index'])
+        self._native_test_state = None
+        return {'ok': True, 'removed': True,
+                'message': 'Удалена только тестовая дорожка.'}
 
     def _probe_region(self, song, req):
         """Non-destructive compatibility probe on a TEMPORARY muted audio track.
