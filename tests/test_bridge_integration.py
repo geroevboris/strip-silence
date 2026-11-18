@@ -167,9 +167,12 @@ class TestClearSilenceBridge(unittest.TestCase):
     def test_non_macos_automatic_split_fails_without_editing_audio(self):
         # CI cannot synthesize native macOS keystrokes. Ensure Linux refuses
         # and never modifies the original WAV/Arrangement clip.
-        song,status,path=self._run('wrong_length',one_clip=True)
+        # Native CI runners include macOS, but must never send live keystrokes.
+        with patch('native_automation.send_native_split',
+                   side_effect=RuntimeError('Автоматизация отключена в тесте')):
+            song,status,path=self._run('wrong_length',one_clip=True)
         self.assertEqual(status['state'],'error',status)
-        self.assertIn('требует macOS',status['errors'][0])
+        self.assertIn('отключена в тесте',status['errors'][0])
         self.assertEqual(len(song.tracks),1)
         self.assertEqual(len(song.tracks[0].arrangement_clips),1)
         original=song.tracks[0].arrangement_clips[0]
