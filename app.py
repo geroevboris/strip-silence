@@ -19,7 +19,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.5.7'
+APP_VERSION = '0.6.0'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -55,8 +55,8 @@ def bridge(action, **args):
 def require_replace_bridge():
     """Fail BEFORE creating files or editing Live when the installed script is old."""
     status = bridge('status')
-    if status.get('protocol') != 8 or 'split_mute' not in status.get('actions', []):
-        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.5.7.' % status.get('version', 'неизвестен'))
+    if status.get('protocol') != 9 or 'auto_begin' not in status.get('actions', []):
+        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.6.0.' % status.get('version', 'неизвестен'))
     if not status.get('can_replace', False):
         raise RuntimeError('Live не предоставил безопасные операции Undo. Разделение клипов отключено.')
     return status
@@ -370,22 +370,113 @@ def _batch_worker(job_id, plan):
         set_job(output_dir=output_dir)
 
 
+def _auto_native_worker(job_id, plan):
+    """Native Arrangement splitting by analyzed WAV silence; no WAV writes."""
+    import native_automation
+
+    def update(**kw):
+        with lock:
+            jobs[job_id].update(kw)
+
+    done = 0
+    entries = plan['entries']
+    try:
+        require_replace_bridge()
+        for i,e in enumerate(entries):
+            with lock:
+                canceled = jobs[job_id]['cancel']
+            if canceled:
+                update(state='canceled',
+                       message='Остановлено после %d клипов.' % done)
+                return
+            wav=WavFile(e['file_path'])
+            origin=e['source']
+            first=round(origin['file_offset']*wav.rate)
+            last=round((origin['file_offset']+e['duration'])*wav.rate)
+            if last > wav.frames and last-wav.frames <= 2:
+                last=wav.frames
+            regions=regions_with_muted_gaps(e['segments'],first,last,
+                       min_region_frames=round(wav.rate*.04))
+            if len(regions)>120:
+                raise RuntimeError('Более 120 фрагментов. Уменьши чувствительность.')
+            ranges=[]
+            for x,y,muted in regions:
+                st=origin['start']+(x/wav.rate-origin['file_offset'])*e['tempo']/60
+                ed=origin['start']+(y/wav.rate-origin['file_offset'])*e['tempo']/60
+                ranges.append({'start':st,'end':ed,'muted':muted})
+            update(current=i+1,message='Обрабатываю: %s · %d регионов' %
+                    (e['label'],len(ranges)))
+            bridge('auto_begin',track_index=e['track_index'],
+                   track_name=e['track_name'],source=origin,regions=ranges)
+            try:
+                for cut in range(max(0,len(ranges)-1)):
+                    with lock:
+                        canceled = jobs[job_id]['cancel']
+                    if canceled:
+                        raise RuntimeError('Отменено после %d разрезов.' % cut)
+                    arm=bridge('auto_arm')
+                    confirmed=None
+                    for retry in range(12):
+                        time.sleep(.14)
+                        confirmed=bridge('auto_confirm')
+                        if confirmed['confirmed']:
+                            break
+                    if not confirmed or not confirmed['confirmed']:
+                        raise RuntimeError(
+                            'Playhead не достиг позиции %.5f (фактически %.5f).' %
+                            (arm['target_beat'],
+                             confirmed['observed_beat'] if confirmed else -1))
+                    native_automation.send_native_split()
+                    verified=None
+                    for retry in range(12):
+                        time.sleep(.16)
+                        verified=bridge('auto_verify')
+                        if verified['verified']:
+                            break
+                    if not verified or not verified['verified']:
+                        raise RuntimeError(
+                            'Ableton не разделил клип: разрез %d/%d, '
+                            'позиция %.5f, найдено фрагментов %s. '
+                            'Проверь фокус Arrangement.' %
+                            (cut+1,len(ranges)-1,arm['target_beat'],
+                             verified['count'] if verified else 'неизвестно'))
+                    update(message='%s · разрез %d/%d'%
+                           (e['label'],cut+1,len(ranges)-1))
+                result=bridge('auto_finish')
+                done+=1
+                update(completed=done,message='%s · %d регионов, %d заглушено' %
+                       (e['label'],result['created'],result['muted']))
+            finally:
+                try:
+                    bridge('auto_abort')
+                except Exception:
+                    pass
+        update(state='done',message='Готово: %d клипов. WAV не изменены.' % done)
+    except Exception as exc:
+        update(state='error',errors=[str(exc)],
+               message='Остановлено на клипе %d/%d. %s' %
+                       (done+1,len(entries),exc))
+
+
 def start_batch(req):
-    raise RuntimeError('Пакетная обработка отключена до подтверждения точной длины регионов в Live. Проект не менялся.')
     require_replace_bridge()
     pid=req.get('plan_id')
     with lock:
+        if any(j['state']=='running' for j in jobs.values()):
+            raise RuntimeError('Обработка уже выполняется.')
         plan=batch_plans.pop(pid,None)
     if plan is None or time.time()-plan['created']>3600:
-        raise ValueError('Analysis expired; analyze again')
+        raise ValueError('Анализ устарел. Попробуй ещё раз.')
     if not plan['entries']:
-        raise ValueError('Nothing to replace')
+        return {'ok':True,'done':True,
+                'message':'Нет тишины, которую нужно заглушать.'}
     job_id=uuid.uuid4().hex
     with lock:
         jobs[job_id]={'state':'running','current':0,'total':len(plan['entries']),
-                      'completed':0,'message':'Preparing WAV fragments…','errors':[], 'cancel':False}
-    worker=threading.Thread(target=_mute_worker,args=(job_id,plan),daemon=True)
-    worker.start()
+                      'completed':0,'message':'Начинаю автоматическую нарезку…',
+                      'errors':[],'cancel':False}
+    threading.Thread(target=_auto_native_worker,args=(job_id,plan),
+                     daemon=True).start()
     return {'ok':True,'job_id':job_id}
 
 
