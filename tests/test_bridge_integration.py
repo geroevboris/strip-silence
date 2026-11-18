@@ -303,6 +303,47 @@ class TestClearSilenceBridge(unittest.TestCase):
             finally:
                 bridge.disconnect()
 
+    def test_native_arm_preserves_existing_waveform_focus(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=os.path.join(d, 'original.wav')
+            self.make_audio(path)
+            song=Song(path)
+            bridge=ClearSilenceBridge(song)
+            try:
+                bridge._execute({'action':'native_prepare',
+                                 'track_index':0,'clip_index':0})
+                # A focused waveform may coexist with another detail_clip:
+                # arming must not change either UI selection property.
+                focused_track=song.tracks[1]
+                previous_detail=object()
+                song.view.detail_clip=previous_detail
+                result=bridge._execute({'action':'native_arm'})
+                self.assertTrue(result['ok'])
+                self.assertIs(song.view.selected_track,focused_track)
+                self.assertIs(song.view.detail_clip,previous_detail)
+                bridge._execute({'action':'native_cleanup'})
+            finally:
+                bridge.disconnect()
+
+    def test_native_arm_refuses_wrong_selected_track_before_cmd_e(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=os.path.join(d, 'original.wav')
+            self.make_audio(path)
+            song=Song(path)
+            bridge=ClearSilenceBridge(song)
+            try:
+                bridge._execute({'action':'native_prepare',
+                                 'track_index':0,'clip_index':0})
+                # User accidentally selects the original track, not the test.
+                song.view.selected_track=song.tracks[0]
+                song.current_song_time=0.
+                with self.assertRaisesRegex(RuntimeError,'не выбрана тестовая'):
+                    bridge._execute({'action':'native_arm'})
+                self.assertEqual(song.current_song_time,0.)
+                bridge._execute({'action':'native_cleanup'})
+            finally:
+                bridge.disconnect()
+
     def test_auto_split_detects_changes_to_other_tracks(self):
         with tempfile.TemporaryDirectory() as d:
             path=os.path.join(d,'source.wav')

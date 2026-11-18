@@ -13,7 +13,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.5.6'
+VERSION = '0.5.7'
 
 
 def create_instance(c_instance):
@@ -340,10 +340,16 @@ class ClearSilenceBridge(ControlSurface):
         view = getattr(song, 'view', None)
         if view is None:
             raise RuntimeError('Live не предоставляет выбор дорожки.')
-        view.selected_track = track
-        view.detail_clip = clip
+        # Critical: do NOT assign view.selected_track or detail_clip here.
+        # The user has focused the desired Arrangement waveform before
+        # switching to Clear Silence. Assigning these properties destroys
+        # the waveform's insert selection, causing Cmd+E to do nothing or
+        # operate with a broad arrangement selection.
         if view.selected_track != track:
-            raise RuntimeError('Невозможно выбрать тестовую дорожку.')
+            raise RuntimeError(
+                'В Ableton не выбрана тестовая дорожка. '
+                'Кликни ВНУТРИ осциллограммы на дорожке "' + state['name'] +
+                '" и снова нажми «Авто Split». Cmd+E не отправлена.')
         duration = state['end'] - state['start']
         if duration <= .2:
             raise RuntimeError('Слишком короткий тестовый клип.')
@@ -361,13 +367,9 @@ class ClearSilenceBridge(ControlSurface):
                  round(float(cl.end_time), 4),
                  bool(cl.muted)) for cl in t.arrangement_clips))
             for t in song.tracks if t != track)
-        try:
-            from Live import Application
-            application = Application.get_application()
-            application.view.show_view('Arranger')
-            application.view.focus_view('Arranger')
-        except Exception:
-            pass
+        # Do not force the Arranger/Clip View focus here. On Live 12,
+        # focus_view can change the selection that Cmd+E operates on.
+        # macOS returns to the previously focused Live editing surface.
         return {'ok': True, 'target_beat': round(target, 5),
                 'test_track_name': state['name']}
 
@@ -412,8 +414,15 @@ class ClearSilenceBridge(ControlSurface):
         clips = sorted(track.arrangement_clips, key=lambda c: float(c.start_time))
         if len(clips) != 2:
             return {'ok': True, 'passed': False, 'count': len(clips),
-                    'message': 'В тестовой дорожке %d клип(ов), нужны два. '
-                               'Выбери точку внутри клипа и нажми Cmd+E.' % len(clips)}
+                    'message': 'На тестовой дорожке остался %d клип(ов): '
+                               'команда Cmd+E не разделила её. '
+                               'Вероятнее всего, фокус был не внутри '
+                               'осциллограммы тестового клипа. '
+                               'Другие клипы не обрабатывались. '
+                               'Сначала кликни по волне внутри тестового '
+                               'клипа в Arrangement, затем повтори тест '
+                               '(подготовь новый тест после удаления '
+                               'предыдущего).' % len(clips)}
         left, right = clips
         valid = (all(c.is_audio_clip and str(c.file_path) == state['path']
                      and not c.warping for c in clips)
