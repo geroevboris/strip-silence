@@ -22,7 +22,7 @@ const root=path.resolve(__dirname,'..');
    return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
  });
  await page.goto('http://127.0.0.1:47862/');await page.waitForFunction(()=>document.getElementById('metrics').textContent.includes('Вырезается'));
- await page.screenshot({path:path.join(process.env.UI_OUTPUT || root,'clear-silence-ui.png')});
+ await page.screenshot({fullPage:true,path:path.join(process.env.UI_OUTPUT || root,'clear-silence-ui.png')});
  const a=await page.locator('#metrics').innerText();
  await page.locator('#strength').fill('90');await page.locator('#strength').dispatchEvent('input');
  const b=await page.locator('#metrics').innerText();if(a===b)throw Error('Wave not reacting');

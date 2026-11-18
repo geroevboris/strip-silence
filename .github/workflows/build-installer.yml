@@ -30,7 +30,7 @@ concurrency:
 jobs:
   source-tests:
     name: Check Python sources and tests (Ubuntu)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       published: ${{ steps.release_check.outputs.published }}
@@ -64,6 +64,7 @@ jobs:
           "$RUNNER_TEMP/ui-check/node_modules/.bin/playwright" install --with-deps chromium
           NODE_PATH="$RUNNER_TEMP/ui-check/node_modules" UI_OUTPUT="$RUNNER_TEMP" node tests/check_ui.cjs
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Clear-Silence-interface
           path: ${{ runner.temp }}/clear-silence-ui.png
