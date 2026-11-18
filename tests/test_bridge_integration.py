@@ -63,6 +63,8 @@ class Song:
     def __init__(self,path):
         self.tempo=120.;self.tracks=[Track([Clip(path)])]
         self.is_playing=False;self.record_mode=False
+        self.current_song_time=0.
+        self.view=types.SimpleNamespace(selected_track=None,detail_clip=None)
     def create_audio_track(self,i):self.tracks.insert(i,Track([]))
     def delete_track(self,i):self.tracks.pop(i)
     def begin_undo_step(self):self._pending=copy.deepcopy(self.tracks)
@@ -103,7 +105,7 @@ class TestClearSilenceBridge(unittest.TestCase):
                 def work():
                     try:
                         s=app.bridge('status')
-                        assert s['protocol']==6 and 'native_prepare' in s['actions']
+                        assert s['protocol']==7 and 'native_arm' in s['actions']
                         profile=app.clip_profile({'track_index':0,'clip_index':0})
                         assert len(profile['peaks'])>100
                         if scenario=='preview':
@@ -224,6 +226,61 @@ class TestClearSilenceBridge(unittest.TestCase):
                 self.assertTrue(clean['removed'],clean)
                 self.assertEqual(len(song.tracks),1)
                 self.assertIs(song.tracks[0].arrangement_clips[0],original)
+            finally:
+                bridge.disconnect()
+
+    def test_auto_split_arms_exact_playhead_and_validates_cut(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=os.path.join(d,'source.wav')
+            self.make_audio(path)
+            song=Song(path)
+            source=song.tracks[0].arrangement_clips[0]
+            bridge=ClearSilenceBridge(song)
+            try:
+                bridge._execute({'action':'native_prepare',
+                                 'track_index':0,'clip_index':0})
+                armed=bridge._execute({'action':'native_arm'})
+                beat=armed['target_beat']
+                self.assertAlmostEqual(song.current_song_time,beat,places=4)
+                self.assertIs(song.view.selected_track,song.tracks[1])
+                self.assertIs(song.view.detail_clip,
+                              song.tracks[1].arrangement_clips[0])
+                left=song.tracks[1].arrangement_clips[0]
+                right=copy.copy(left)
+                # Wrong split position must be rejected without Mute.
+                left.end_time=beat+1
+                right.start_time=beat+1
+                song.tracks[1].arrangement_clips=[left,right]
+                wrong=bridge._execute({'action':'native_verify'})
+                self.assertFalse(wrong['passed'],wrong)
+                self.assertFalse(right.muted)
+                # At the planned beat this same sample passes.
+                left.end_time=beat
+                right.start_time=beat
+                passed=bridge._execute({'action':'native_verify'})
+                self.assertTrue(passed['passed'],passed)
+                self.assertTrue(right.muted)
+                self.assertIs(song.tracks[0].arrangement_clips[0],source)
+                bridge._execute({'action':'native_cleanup'})
+            finally:
+                bridge.disconnect()
+
+    def test_auto_split_detects_changes_to_other_tracks(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=os.path.join(d,'source.wav')
+            self.make_audio(path)
+            song=Song(path)
+            bridge=ClearSilenceBridge(song)
+            try:
+                bridge._execute({'action':'native_prepare',
+                                 'track_index':0,'clip_index':0})
+                bridge._execute({'action':'native_arm'})
+                song.tracks[0].arrangement_clips[0].name='Changed'
+                # Name alone is not the fingerprint; timing modification is.
+                song.tracks[0].arrangement_clips[0].end_time+=1
+                with self.assertRaisesRegex(RuntimeError,'другую дорожку'):
+                    bridge._execute({'action':'native_verify'})
+                bridge._execute({'action':'native_cleanup'})
             finally:
                 bridge.disconnect()
 
