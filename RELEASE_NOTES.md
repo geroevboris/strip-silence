@@ -1,15 +1,12 @@
-Clear Silence 0.6.2 for macOS Apple Silicon — native Arrangement Split + Mute.
+Clear Silence 0.7.0 — silence removal, Take Lanes and a refreshed interface.
 
-Addresses the reported 0.6.1 failure `CS_SPLIT_DISABLED: Split [AXStaticText: Arrangement Editor]`.
+- Restored the original workflow: replace source clips on their existing tracks with sample-preserving WAV fragments; remove quiet intervals. Removed native Split, keyboard shortcuts and Accessibility automation.
+- Optional original-audio backups in Take Lanes, enabled by default. Complete visible clip audio, including silence, is copied without resampling and verified before the main clip is removed. One new lane per processed track per run. Existing take lanes remain unchanged.
+- Warm charcoal/orange interface; amber kept regions and lavender-grey hatching for removed regions. Instant slider preview. Transparent rounded app icon without an outer black square.
+- Stop and Undo the current clip on an import/boundary/backup error. Preserve source WAVs and neighbouring clips. Cancellation stops after the current clip.
 
-The Cmd+E menu is now opened before its enabled state is read, allowing native menu validation to run. If it remains disabled, Clear Silence unfolds the target track and initializes a genuine content-lane selection: Escape focuses the highlighted track title, its AX text is checked against the expected track name, and live title/editor bounds determine a click inside that row. There are no fixed screen coordinates. The bridge then checks the actual selected track and restores only the exact playhead. The subsequent insert-marker command preserves the clicked lane; it does not reactivate an unrelated standby selection. Split is sent only after a fresh enabled-menu and bridge check.
+Install the PKG, launch Clear Silence once to update its bridge, then fully restart Ableton Live. Use Control Surface ClearSilenceBridge with Input/Output None. Both components must be 0.7.0 (protocol 12). No Accessibility setup is needed for processing.
 
-Recovery is attempted once before any edit. A wrong track, unknown editor, off-screen title, stale timing or still-disabled Split stops the operation. Permissions and timeouts never trigger blind edit retries.
+To reveal originals: track header → Show Take Lanes → Clear Silence · Original · …. To restore audio: select the take material → Copy Selection to Main Lane. Backups are copies of the visible unwarped audio region with original gain, not complete clones of all Live clip metadata. Live's import fade settings apply. WAV only; Warp/Loop, pitch, envelopes and groove are skipped. For transferring a Set use Collect All and Save; generated files remain in ~/Music/ClearSilence Output.
 
-Every resulting boundary and WAV offset is checked with a two-source-sample tolerance before silent fragments receive Clip.muted. Neighbouring clips on the same track are protected as well as other tracks. Source WAV files are never rewritten by this workflow. No clip recreation, rendering or deletion fallback is used. Muted pieces can be reactivated and their edges extended.
-
-Install the PKG, launch Clear Silence once to update its bridge, then fully restart Ableton Live. Allow Clear Silence in macOS Accessibility and Automation → System Events if requested. The UI and bridge must both report 0.6.2 (protocol 11).
-
-Validation: automated worker/bridge tests include seven clips across two tracks, sequential cuts, incorrect source offsets, incorrect boundaries, tempo/selection changes, cancellation and disabled Split. Native key events are mocked in tests. macOS CI compiles the AppleScript and builds/checks the frozen app. This is a beta: these checks do not establish successful UI operation in the user's Live 12.4.6. No Live instance is available in CI. An interrupted run can leave already completed native splits in the Set; native Undo remains available. The app does not claim sample-accurate operation until Live has returned matching boundaries.
-
-The installer is ad-hoc signed, not notarized. Runtime details: ~/Library/Logs/ClearSilence/automation.log.
+Validation: sample-preserving WAV tests; seven clips on two tracks; trimmed sources; silent clips; backup-first ordering; import failures and rollback; neighbouring clips; cancellation; authenticated socket processing; UI interactions and rendering; macOS arm64 frozen-app import check and installer verification. Ableton Live itself is not available in CI, so Take Lanes runtime behaviour still requires confirmation on the user's installation.

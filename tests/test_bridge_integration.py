@@ -1,503 +1,258 @@
-"""Mock Live LOM integration. Real Live 12.4.6 still requires on-device validation."""
-import copy, math, os, struct, sys, tempfile, threading, time, types, unittest, wave
+"""Live API doubles: verify replacement, backup ordering and rollback.
+
+These tests do not claim to run Ableton Live; macOS CI builds the actual app.
+"""
+import copy
+import math
+import os
+from pathlib import Path
+import struct
+import sys
+import tempfile
+import threading
+import time
+import types
+import unittest
+import wave
 from unittest.mock import patch
-root=os.path.dirname(os.path.dirname(__file__))
-sys.path.insert(0,root)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 frame=types.ModuleType('_Framework'); surf=types.ModuleType('_Framework.ControlSurface')
 class ControlSurface:
-    def __init__(self,c):self._song=c
-    def song(self):return self._song
-    def application(self):return self._song.application
-    def log_message(self,*a):pass
-    def update_display(self):pass
-    def disconnect(self):pass
+    def __init__(self,c): self._song=c
+    def song(self): return self._song
+    def log_message(self,*args): pass
+    def update_display(self): pass
+    def disconnect(self): pass
 surf.ControlSurface=ControlSurface
-sys.modules['_Framework']=frame;sys.modules['_Framework.ControlSurface']=surf
+sys.modules['_Framework']=frame; sys.modules['_Framework.ControlSurface']=surf
 from ClearSilenceBridge import ClearSilenceBridge
+import ClearSilenceBridge as bridge_module
 import app
-from silence_math import regions_with_muted_gaps,settings_for_strength
 
 class Clip:
-    is_audio_clip=True;warping=False;looping=False;gain=0.7;has_envelopes=False
-    pitch_coarse=0;pitch_fine=0;muted=False;color=0x88ccbb;has_groove=False
-    start_marker=0.;end_marker=2.
-    def __init__(self,path='',st=16.,ed=20.,loopstart=0.,loopend=2.):
-        self.file_path=path;self.name='Test';self.start_time=st;self.end_time=ed
-        self.loop_start=loopstart;self.loop_end=loopend
-        # In unlooped Live clips, Arrangement duplication length is derived
-        # from start/end markers, not just loop brace coordinates.
-        self.start_marker=loopstart;self.end_marker=loopend
+    is_audio_clip=True; warping=False; looping=False; gain=.7; has_envelopes=False
+    pitch_coarse=0; pitch_fine=0; muted=False; color=0xcc8844; has_groove=False
+    def __init__(self,path,st=16.,ed=20.,offset=0.):
+        self.file_path=path; self.name='Voice'; self.start_time=st; self.end_time=ed
+        self.loop_start=offset; self.loop_end=offset+(ed-st)/2
 
-class Slot:
-    def __init__(self):self.clip=None
-    @property
-    def has_clip(self):return self.clip is not None
-    def create_audio_clip(self,path):
-        assert not self.has_clip and os.path.isfile(path)
-        with wave.open(path,'rb') as f:duration=f.getnframes()/f.getframerate()
-        self.clip=Clip(path,loopstart=0.,loopend=duration)
-    def delete_clip(self):self.clip=None
-
-class Track:
-    has_audio_input=True;is_frozen=False
-    def __init__(self,clips):
-        self.name='Sound';self.arrangement_clips=clips;self.clip_slots=[Slot()]
-        self.view=types.SimpleNamespace(is_collapsed=False)
-        self.mute=False;self.fail_next_duplicate=False;self.ignore_content_markers=False
-    def duplicate_clip_to_arrangement(self,session,beat):
-        if self.fail_next_duplicate:
-            self.fail_next_duplicate=False
-            raise RuntimeError('Simulated duplication failure')
-        # Live's unlooped Session clip length comes from the content markers,
-        # not merely the loop brace. Ignore them only for rollback regression.
-        duration=((session.loop_end if self.ignore_content_markers else session.end_marker)
-                  -(0. if self.ignore_content_markers else session.start_marker))*2
-        cl=copy.copy(session);cl.start_time=beat;cl.end_time=beat+duration
-        self.arrangement_clips.append(cl)
-        return cl
+class Lane:
+    return_none=False; wrong_length=False; fail_create=False
+    def __init__(self): self.name='Take'; self.arrangement_clips=[]
     def create_audio_clip(self,path,beat):
-        with wave.open(path,'rb') as f:duration=f.getnframes()/f.getframerate()
-        c=Clip(path,beat,beat+duration*2,0.,duration)
-        self.arrangement_clips.append(c);return c
-    def delete_clip(self,clip):self.arrangement_clips.remove(clip)
+        if self.fail_create: raise RuntimeError('Simulated file import failure')
+        with wave.open(path,'rb') as f: duration=f.getnframes()/f.getframerate()
+        c=Clip(path,beat,beat+duration*2)
+        if self.wrong_length: c.end_time+=.5
+        self.arrangement_clips.append(c)
+        return None if self.return_none else c
+
+class Track(Lane):
+    has_audio_input=True; is_frozen=False
+    def __init__(self,clips):
+        super().__init__(); self.name='Voice'; self.arrangement_clips=clips; self.take_lanes=[]
+        self.mute=False; self.delete_calls=0; self.lane_factory=Lane
+    def create_take_lane(self): self.take_lanes.append(self.lane_factory())
+    def delete_clip(self,clip):
+        self.delete_calls+=1; self.arrangement_clips.remove(clip)
 
 class Song:
     def __init__(self,path):
-        self.tempo=120.;self.tracks=[Track([Clip(path)])]
-        self.is_playing=False;self.record_mode=False
-        self.current_song_time=0.
-        self.focused_views=[]
-        self.application=types.SimpleNamespace(view=types.SimpleNamespace(
-            focus_view=self.focused_views.append))
-        self.view=types.SimpleNamespace(selected_track=None,detail_clip=None)
-    def create_audio_track(self,i):self.tracks.insert(i,Track([]))
-    def delete_track(self,i):self.tracks.pop(i)
-    def begin_undo_step(self):self._pending=copy.deepcopy(self.tracks)
-    def end_undo_step(self):
-        if getattr(self,'_pending',None) is not None:
-            self._undo=self._pending;self._pending=None
-    def undo(self):self.tracks=self._undo
+        self.tempo=120.; self.tracks=[Track([Clip(path)])]
+        self.is_playing=False; self.record_mode=False; self.undo_calls=0
+        self.view=types.SimpleNamespace(selected_track=self.tracks[0])
+    def begin_undo_step(self): self._pending=copy.deepcopy(self.tracks)
+    def end_undo_step(self): self._undo=self._pending
+    def undo(self): self.undo_calls+=1; self.tracks=self._undo
+    def create_audio_track(self,i): self.tracks.insert(i,Track([]))
+    def delete_track(self,i): self.tracks.pop(i)
 
-class TestClearSilenceBridge(unittest.TestCase):
-    def make_audio(self,path):
-        sr=24000
-        with wave.open(path,'wb') as f:
-            f.setnchannels(1);f.setsampwidth(2);f.setframerate(sr)
-            frames=[int(15000*math.sin(i*.1)) if .1 < i/sr < .5 or 1.2 < i/sr < 1.6 else 0 for i in range(sr*2)]
-            f.writeframes(struct.pack('<%dh'%len(frames),*frames))
 
-    def _run(self,scenario,one_clip=False):
-        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as d:
-            old_home=os.environ.get('HOME');old_token=app.TOKEN_FILE
-            bridge_mod=sys.modules['ClearSilenceBridge'];old_bridge_token=bridge_mod.TOKEN_FILE
-            old_preview=app.PREVIEW_ROOT
-            try:
-                os.environ['HOME']=home
-                bridge_mod.TOKEN_FILE=os.path.join(home,'bridge_token')
-                app.TOKEN_FILE=bridge_mod.TOKEN_FILE
-                app.PREVIEW_ROOT=os.path.join(home,'Music','ClearSilence Preview')
-                path=os.path.join(d,'source.wav');self.make_audio(path)
-                song=Song(path)
-                if not one_clip: song.tracks[0].arrangement_clips.append(Clip(path,24.,28.))
-                if scenario=='failure':song.tracks[0].fail_next_duplicate=True
-                if scenario=='wrong_length':song.tracks[0].ignore_content_markers=True
-                bridge=ClearSilenceBridge(song)
-                until=time.time()+2
-                while bridge._server_socket is None and time.time()<until:
-                    time.sleep(.005)
-                self.assertIsNotNone(bridge._server_socket, 'Test bridge listener failed to start')
-                results=[]
-                def work():
-                    try:
-                        s=app.bridge('status')
-                        assert s['protocol']==11 and 'auto_begin' in s['actions']
-                        profile=app.clip_profile({'track_index':0,'clip_index':0})
-                        assert len(profile['peaks'])>100
-                        if scenario=='preview':
-                            plan=app.analyze({'track_index':0,'clip_index':0,'threshold':-40,'min_silence_ms':200,'padding_ms':20})
-                            r=app.create_preview({'plan_id':plan['plan_id']});results.append(r)
-                            return
-                        plan=app.plan_batch({'track_indices':[0],'strength':50})
-                        assert plan['replace_clips']==(1 if one_clip else 2),plan
-                        j=app.start_batch({'plan_id':plan['plan_id']})
-                        while True:
-                            status=app.get_job(j['job_id'])
-                            if status['state']!='running':results.append(status);return
-                            time.sleep(.01)
-                    except Exception as e:results.append({'state':'exception','error':repr(e)})
-                th=threading.Thread(target=work);th.start();end=time.time()+25
-                while th.is_alive() and time.time()<end:bridge.update_display();time.sleep(.005)
-                th.join(.5);bridge.disconnect();self.assertFalse(th.is_alive(),'Bridge hung')
-                self.assertEqual(len(results),1,results)
-                return song,results[0],path
-            finally:
-                app.TOKEN_FILE=old_token;app.PREVIEW_ROOT=old_preview
-                bridge_mod.TOKEN_FILE=old_bridge_token
-                if old_home is None:os.environ.pop('HOME',None)
-                else:os.environ['HOME']=old_home
+def make_audio(path,silent=False):
+    sr=24000
+    samples=[int(15000*math.sin(i*.1)) if not silent and (.1<i/sr<.5 or 1.2<i/sr<1.6) else 0 for i in range(sr*2)]
+    with wave.open(str(path),'wb') as f:
+        f.setnchannels(1); f.setsampwidth(2); f.setframerate(sr)
+        f.writeframes(struct.pack('<%dh'%len(samples),*samples))
 
-    def test_preview_legacy_remains_safe(self):
-        song,result,path=self._run('preview',one_clip=True)
-        self.assertEqual(result['created'],2,result)
-        self.assertEqual(len(song.tracks),2)
-        self.assertEqual(len(song.tracks[0].arrangement_clips),1)
-        self.assertEqual(len(song.tracks[1].arrangement_clips),2)
 
-    @unittest.skip('Split + Mute disabled pending compatibility probe on real Live')
-    def test_split_muted_gaps_retains_original_wav(self):
-        song,status,path=self._run('success')
-        self.assertEqual(status['state'],'done',status)
-        self.assertEqual(status['completed'],2,status)
-        arr=song.tracks[0].arrangement_clips
-        self.assertGreater(len(arr),5)
-        self.assertEqual([c.file_path for c in arr],[path]*len(arr))
-        self.assertTrue(all(abs((c.loop_end-c.loop_start) * 2-(c.end_time-c.start_time))<0.005 for c in arr))
-        self.assertTrue(all(abs(c.start_marker-c.loop_start)<0.005 and
-                            abs(c.end_marker-c.loop_end)<0.005 for c in arr))
-        self.assertTrue(any(c.muted for c in arr))
-        self.assertTrue(any(not c.muted for c in arr))
-        self.assertFalse(song.tracks[0].clip_slots[0].has_clip)
-        self.assertAlmostEqual(arr[0].start_time,16.,places=3)
-        self.assertAlmostEqual(arr[-1].end_time,28.,places=3)
+def pcm(path):
+    with wave.open(str(path),'rb') as f: return f.readframes(f.getnframes())
 
-    @unittest.skip('Split + Mute disabled pending compatibility probe on real Live')
-    def test_undo_if_session_duplication_fails(self):
-        song,status,path=self._run('failure')
-        self.assertEqual(status['state'],'error',status)
-        self.assertEqual(status['completed'],0,status)
-        self.assertEqual(len(song.tracks[0].arrangement_clips),2)
-        self.assertFalse(song.tracks[0].clip_slots[0].has_clip)
-        self.assertEqual({c.file_path for c in song.tracks[0].arrangement_clips},{path})
+class ReplacementTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.home=Path(self.temp.name); self.path=str(self.home/'source.wav'); make_audio(self.path)
+        self.original=Path(self.path).read_bytes()
+        self.song=Song(self.path)
+        self.bridge=ClearSilenceBridge.__new__(ClearSilenceBridge); self.bridge._song=self.song
+        self.output=self.home/'Music'/'ClearSilence Output'
+        for patcher in [patch.dict(os.environ,HOME=str(self.home)),patch.object(app,'OUTPUT_ROOT',str(self.output)),patch.object(app,'bridge',self.call)]:
+            patcher.start(); self.addCleanup(patcher.stop)
+        app.jobs.clear(); app.batch_plans.clear()
+        self.addCleanup(app.jobs.clear); self.addCleanup(app.batch_plans.clear)
 
-    def test_non_macos_automatic_split_fails_without_editing_audio(self):
-        # CI cannot synthesize native macOS keystrokes. Ensure Linux refuses
-        # and never modifies the original WAV/Arrangement clip.
-        # Native CI runners include macOS, but must never send live keystrokes.
-        with patch('native_automation.prepare_native_split',
-                   side_effect=RuntimeError('Автоматизация отключена в тесте')):
-            song,status,path=self._run('wrong_length',one_clip=True)
-        self.assertEqual(status['state'],'error',status)
-        self.assertIn('отключена в тесте',status['errors'][0])
-        self.assertEqual(len(song.tracks),1)
-        self.assertEqual(len(song.tracks[0].arrangement_clips),1)
-        original=song.tracks[0].arrangement_clips[0]
-        self.assertEqual((original.start_time,original.end_time),(16.,20.))
-        self.assertEqual(original.file_path,path)
-        self.assertFalse(song.tracks[0].clip_slots[0].has_clip)
+    def call(self,action,**kwargs): return self.bridge._execute(dict(action=action,**kwargs))
+    def plan(self,backup=True):
+        result=app.plan_batch(dict(track_indices=list(range(len(self.song.tracks))),strength=50,backup_originals=backup))
+        return app.batch_plans.pop(result['plan_id'])
+    def run_worker(self,backup=True,plan=None,cancel=False):
+        app.jobs['test-batch-123456']=dict(cancel=cancel,state='running',completed=0)
+        app._batch_worker('test-batch-123456',plan or self.plan(backup))
+        return app.jobs['test-batch-123456']
+    def assert_source_intact(self): self.assertEqual(self.original,Path(self.path).read_bytes())
 
-    def test_previous_0_5_bridge_is_refused_before_any_edit(self):
-        # Both versions expose split_mute; the new protocol prevents reusing
-        # the buggy bridge just because its command names match.
-        with patch.object(app, 'bridge', return_value={
-            'ok':True, 'version':'0.5.0', 'protocol':3,
-            'actions':['status','list','split_mute'], 'can_replace':True
-        }):
-            with self.assertRaisesRegex(RuntimeError, 'старый ClearSilenceBridge'):
-                app.require_replace_bridge()
+    def test_seven_clips_two_tracks_with_full_backups(self):
+        for t,count in [(self.song.tracks[0],4),(Track([]),3)]:
+            t.arrangement_clips=[Clip(self.path,360+i*8,364+i*8) for i in range(count)]
+            if t not in self.song.tracks: t.name='Голос 2'; self.song.tracks.append(t)
+        result=self.run_worker()
+        self.assertEqual(result['state'],'done',result); self.assertEqual(result['completed'],7)
+        for track,count in zip(self.song.tracks,(4,3)):
+            self.assertEqual(len(track.arrangement_clips),count*2)
+            self.assertEqual(len(track.take_lanes),1)
+            backups=track.take_lanes[0].arrangement_clips
+            self.assertEqual(len(backups),count)
+            for i,backup in enumerate(backups):
+                self.assertEqual(pcm(backup.file_path),pcm(self.path))
+                self.assertEqual((backup.start_time,backup.end_time),(360+i*8,364+i*8))
+                self.assertEqual(backup.gain,.7)
+            self.assertTrue(all(not c.muted for c in track.arrangement_clips))
+            self.assertTrue(all(c.gain==.7 and c.color==0xcc8844 for c in track.arrangement_clips))
+        self.assert_source_intact()
 
-    def test_full_auto_multiple_splits_and_muted_gaps(self):
-        with tempfile.TemporaryDirectory() as d:
-            path=os.path.join(d,'source.wav')
-            self.make_audio(path)
-            song=Song(path)
-            song.view.selected_track=song.tracks[0]
-            bridge=ClearSilenceBridge(song)
-            try:
-                regions=[
-                    {'start':16.,'end':16.6,'muted':True},
-                    {'start':16.6,'end':17.8,'muted':False},
-                    {'start':17.8,'end':18.4,'muted':True},
-                    {'start':18.4,'end':20.,'muted':False},
-                ]
-                started=bridge._execute({'action':'auto_begin',
-                    'track_index':0,'track_name':'Sound',
-                    'tempo':120.,'rate':24000,
-                    'source':{'file_path':path,'start':16.,'end':20.,'file_offset':0.,'file_end':2.},
-                    'regions':regions})
-                self.assertEqual(started['cuts'],3)
-                for boundary in (18.4,17.8,16.6):
-                    armed=bridge._execute({'action':'auto_arm'})
-                    self.assertAlmostEqual(armed['target_beat'],boundary,places=4)
-                    self.assertTrue(bridge._execute({'action':'auto_confirm'})['confirmed'])
-                    track=song.tracks[0]
-                    left=next(c for c in track.arrangement_clips
-                              if c.start_time < boundary < c.end_time)
-                    right=copy.copy(left)
-                    right.start_time=boundary
-                    right.loop_start=(boundary-16.)/2
-                    left.loop_end=right.loop_start
-                    left.end_time=boundary
-                    track.arrangement_clips.append(right)
-                    verified=bridge._execute({'action':'auto_verify'})
-                    self.assertTrue(verified['verified'],verified)
-                finish=bridge._execute({'action':'auto_finish'})
-                self.assertEqual(finish['created'],4)
-                self.assertEqual(finish['muted'],2)
-                ordered=sorted(song.tracks[0].arrangement_clips,
-                               key=lambda c:c.start_time)
-                self.assertEqual([c.muted for c in ordered],
-                                 [True,False,True,False])
-                self.assertEqual([c.file_path for c in ordered],[path]*4)
-            finally:
-                bridge.disconnect()
+    def test_offset_backup_is_exact_visible_region(self):
+        self.song.tracks[0].arrangement_clips=[Clip(self.path,50.,53.,.25)]
+        result=self.run_worker(); self.assertEqual(result['state'],'done',result)
+        backup=self.song.tracks[0].take_lanes[0].arrangement_clips[0]
+        self.assertEqual((backup.start_time,backup.end_time),(50.,53.))
+        self.assertEqual(pcm(backup.file_path),pcm(self.path)[int(.25*24000)*2:int(1.75*24000)*2])
+        self.assert_source_intact()
 
-    def test_full_auto_wrong_split_does_not_mute(self):
-        with tempfile.TemporaryDirectory() as d:
-            path=os.path.join(d,'source.wav')
-            self.make_audio(path)
-            song=Song(path)
-            bridge=ClearSilenceBridge(song)
-            try:
-                bridge._execute({'action':'auto_begin',
-                    'track_index':0,'track_name':'Sound',
-                    'tempo':120.,'rate':24000,
-                    'source':{'file_path':path,'start':16.,'end':20.,'file_offset':0.,'file_end':2.},
-                    'regions':[{'start':16.,'end':18.,'muted':True},
-                               {'start':18.,'end':20.,'muted':False}]})
-                bridge._execute({'action':'auto_arm'})
-                bridge._execute({'action':'auto_confirm'})
-                left=song.tracks[0].arrangement_clips[0]
-                right=copy.copy(left)
-                left.end_time=19.
-                right.start_time=19.
-                right.loop_start=1.5
-                left.loop_end=1.5
-                song.tracks[0].arrangement_clips.append(right)
-                with self.assertRaisesRegex(RuntimeError,'не в нужной точке'):
-                    bridge._execute({'action':'auto_verify'})
-                self.assertFalse(left.muted)
-                self.assertFalse(right.muted)
-            finally:
-                bridge.disconnect()
+    def test_silence_removed_only_from_main_lane(self):
+        make_audio(self.path,silent=True)
+        result=self.run_worker(); self.assertEqual(result['state'],'done',result)
+        self.assertEqual(self.song.tracks[0].arrangement_clips,[])
+        backup=self.song.tracks[0].take_lanes[0].arrangement_clips[0]
+        self.assertEqual(pcm(backup.file_path),pcm(self.path))
 
-    def test_native_split_and_mute_on_disposable_track(self):
-        with tempfile.TemporaryDirectory() as d:
-            path=os.path.join(d,'source.wav')
-            self.make_audio(path)
-            song=Song(path)
-            original=song.tracks[0].arrangement_clips[0]
-            bridge=ClearSilenceBridge(song)
-            try:
-                result=bridge._execute({'action':'native_prepare',
-                                        'track_index':0, 'clip_index':0})
-                self.assertTrue(result['ok'],result)
-                self.assertEqual(len(song.tracks),2)
-                temp=song.tracks[1]
-                self.assertTrue(temp.mute)
-                self.assertEqual(len(temp.arrangement_clips),1)
-                self.assertEqual(temp.arrangement_clips[0].start_time,
-                                 original.start_time)
-                # Without a real native GUI split, verification must refuse.
-                pending=bridge._execute({'action':'native_verify'})
-                self.assertFalse(pending['passed'],pending)
-                # Simulate Live's Cmd+E producing two adjacent Arrangement
-                # clips referencing the exact same full source file.
-                left=temp.arrangement_clips[0]
-                right=copy.copy(left)
-                cut=left.start_time+1.
-                right.start_time=cut
-                left.end_time=cut
-                temp.arrangement_clips=[left,right]
-                passed=bridge._execute({'action':'native_verify'})
-                self.assertTrue(passed['passed'],passed)
-                self.assertFalse(left.muted)
-                self.assertTrue(right.muted)
-                self.assertEqual(left.file_path,path)
-                self.assertEqual(right.file_path,path)
-                self.assertIs(song.tracks[0].arrangement_clips[0],original)
-                self.assertEqual((original.start_time,original.end_time),(16.,20.))
-                clean=bridge._execute({'action':'native_cleanup'})
-                self.assertTrue(clean['removed'],clean)
-                self.assertEqual(len(song.tracks),1)
-                self.assertIs(song.tracks[0].arrangement_clips[0],original)
-            finally:
-                bridge.disconnect()
+    def test_backup_can_be_disabled(self):
+        self.song.tracks[0].create_take_lane=None
+        result=self.run_worker(backup=False); self.assertEqual(result['state'],'done',result)
+        self.assertEqual(self.song.tracks[0].take_lanes,[])
+        self.assertEqual(len(self.song.tracks[0].arrangement_clips),2)
+        self.assert_source_intact()
 
-    def test_auto_split_arms_exact_playhead_and_validates_cut(self):
-        with tempfile.TemporaryDirectory() as d:
-            path=os.path.join(d,'source.wav')
-            self.make_audio(path)
-            song=Song(path)
-            source=song.tracks[0].arrangement_clips[0]
-            bridge=ClearSilenceBridge(song)
-            try:
-                bridge._execute({'action':'native_prepare',
-                                 'track_index':0,'clip_index':0})
-                armed=bridge._execute({'action':'native_arm'})
-                beat=armed['target_beat']
-                self.assertAlmostEqual(song.current_song_time,beat,places=4)
-                self.assertTrue(bridge._execute({'action':'native_confirm'})['confirmed'])
-                self.assertIs(song.view.selected_track,song.tracks[1])
-                self.assertIs(song.view.detail_clip,
-                              song.tracks[1].arrangement_clips[0])
-                left=song.tracks[1].arrangement_clips[0]
-                right=copy.copy(left)
-                # Wrong split position must be rejected without Mute.
-                left.end_time=beat+1
-                right.start_time=beat+1
-                song.tracks[1].arrangement_clips=[left,right]
-                wrong=bridge._execute({'action':'native_verify'})
-                self.assertFalse(wrong['passed'],wrong)
-                self.assertFalse(right.muted)
-                # At the planned beat this same sample passes.
-                left.end_time=beat
-                right.start_time=beat
-                passed=bridge._execute({'action':'native_verify'})
-                self.assertTrue(passed['passed'],passed)
-                self.assertTrue(right.muted)
-                self.assertIs(song.tracks[0].arrangement_clips[0],source)
-                bridge._execute({'action':'native_cleanup'})
-            finally:
-                bridge.disconnect()
+    def test_capability_preflight_checks_every_track_before_edits(self):
+        self.song.tracks.append(Track([Clip(self.path)])); self.song.tracks[1].create_take_lane=None
+        result=self.run_worker(); self.assertEqual(result['state'],'error')
+        self.assertEqual(result['completed'],0); self.assertFalse(self.output.exists())
+        self.assertEqual(self.song.tracks[0].delete_calls,0)
 
-    def test_delayed_playhead_acknowledgement(self):
-        class DeferredSong(Song):
-            def __init__(self, path):
-                self._actual_time = 0.
-                self._pending_time = None
-                super().__init__(path)
-            @property
-            def current_song_time(self):
-                return self._actual_time
-            @current_song_time.setter
-            def current_song_time(self, value):
-                self._pending_time = float(value)
-            def advance_live_tick(self):
-                self._actual_time = self._pending_time
+    def test_backup_failure_never_deletes_original(self):
+        original=self.song.tracks[0]
+        class BadLane(Lane): fail_create=True
+        original.lane_factory=BadLane
+        result=self.run_worker(); self.assertEqual(result['state'],'error',result)
+        self.assertEqual(original.delete_calls,0); self.assertEqual(self.song.undo_calls,1)
+        self.assertEqual(self.song.tracks[0].take_lanes,[])
+        self.assertEqual(self.song.tracks[0].arrangement_clips[0].file_path,self.path)
 
-        with tempfile.TemporaryDirectory() as d:
-            path=os.path.join(d,'source.wav')
-            self.make_audio(path)
-            song=DeferredSong(path)
-            bridge=ClearSilenceBridge(song)
-            try:
-                bridge._execute({'action':'native_prepare',
-                                 'track_index':0,'clip_index':0})
-                armed=bridge._execute({'action':'native_arm'})
-                early=bridge._execute({'action':'native_confirm'})
-                self.assertFalse(early['confirmed'])
-                song.advance_live_tick()
-                late=bridge._execute({'action':'native_confirm'})
-                self.assertTrue(late['confirmed'],late)
-                self.assertAlmostEqual(late['target_beat'],
-                                       armed['target_beat'])
-                bridge._execute({'action':'native_cleanup'})
-            finally:
-                bridge.disconnect()
+    def test_wrong_backup_boundaries_refuse_main_edit(self):
+        original=self.song.tracks[0]
+        class BadLane(Lane): wrong_length=True
+        original.lane_factory=BadLane
+        result=self.run_worker(); self.assertEqual(result['state'],'error',result)
+        self.assertEqual(original.delete_calls,0); self.assertEqual(self.song.undo_calls,1)
 
-    def test_native_arm_preserves_existing_waveform_focus(self):
-        with tempfile.TemporaryDirectory() as d:
-            path=os.path.join(d, 'original.wav')
-            self.make_audio(path)
-            song=Song(path)
-            bridge=ClearSilenceBridge(song)
-            try:
-                bridge._execute({'action':'native_prepare',
-                                 'track_index':0,'clip_index':0})
-                # A focused waveform may coexist with another detail_clip:
-                # arming must not change either UI selection property.
-                focused_track=song.tracks[1]
-                previous_detail=object()
-                song.view.detail_clip=previous_detail
-                result=bridge._execute({'action':'native_arm'})
-                self.assertTrue(result['ok'])
-                self.assertIs(song.view.selected_track,focused_track)
-                self.assertIs(song.view.detail_clip,previous_detail)
-                bridge._execute({'action':'native_cleanup'})
-            finally:
-                bridge.disconnect()
+    def test_fragment_import_failure_undo_restores_source_and_lane(self):
+        self.song.tracks[0].fail_create=True
+        result=self.run_worker(); self.assertEqual(result['state'],'error',result)
+        self.assertEqual(self.song.undo_calls,1)
+        self.assertEqual(len(self.song.tracks[0].arrangement_clips),1)
+        self.assertEqual(self.song.tracks[0].arrangement_clips[0].file_path,self.path)
+        self.assertEqual(self.song.tracks[0].take_lanes,[])
+        self.assert_source_intact()
 
-    def test_native_arm_refuses_wrong_selected_track_before_cmd_e(self):
-        with tempfile.TemporaryDirectory() as d:
-            path=os.path.join(d, 'original.wav')
-            self.make_audio(path)
-            song=Song(path)
-            bridge=ClearSilenceBridge(song)
-            try:
-                bridge._execute({'action':'native_prepare',
-                                 'track_index':0,'clip_index':0})
-                # User accidentally selects the original track, not the test.
-                song.view.selected_track=song.tracks[0]
-                song.current_song_time=0.
-                with self.assertRaisesRegex(RuntimeError,'не выбрана тестовая'):
-                    bridge._execute({'action':'native_arm'})
-                self.assertEqual(song.current_song_time,0.)
-                bridge._execute({'action':'native_cleanup'})
-            finally:
-                bridge.disconnect()
+    def test_wrong_fragment_boundaries_undo(self):
+        self.song.tracks[0].wrong_length=True
+        result=self.run_worker(); self.assertEqual(result['state'],'error',result)
+        self.assertEqual(self.song.undo_calls,1)
+        self.assertEqual(self.song.tracks[0].arrangement_clips[0].end_time,20.)
 
-    def test_auto_split_detects_changes_to_other_tracks(self):
-        with tempfile.TemporaryDirectory() as d:
-            path=os.path.join(d,'source.wav')
-            self.make_audio(path)
-            song=Song(path)
-            bridge=ClearSilenceBridge(song)
-            try:
-                bridge._execute({'action':'native_prepare',
-                                 'track_index':0,'clip_index':0})
-                bridge._execute({'action':'native_arm'})
-                self.assertTrue(bridge._execute({'action':'native_confirm'})['confirmed'])
-                song.tracks[0].arrangement_clips[0].name='Changed'
-                # Name alone is not the fingerprint; timing modification is.
-                song.tracks[0].arrangement_clips[0].end_time+=1
-                with self.assertRaisesRegex(RuntimeError,'Исходная дорожка'):
-                    bridge._execute({'action':'native_verify'})
-                bridge._execute({'action':'native_cleanup'})
-            finally:
-                bridge.disconnect()
+    def test_none_return_from_live_is_supported(self):
+        self.song.tracks[0].return_none=True
+        class VoidLane(Lane): return_none=True
+        self.song.tracks[0].lane_factory=VoidLane
+        result=self.run_worker(); self.assertEqual(result['state'],'done',result)
 
-    def test_native_cleanup_refuses_unrelated_file(self):
-        with tempfile.TemporaryDirectory() as d:
-            path=os.path.join(d,'source.wav')
-            self.make_audio(path)
-            song=Song(path)
-            bridge=ClearSilenceBridge(song)
-            try:
-                bridge._execute({'action':'native_prepare',
-                                 'track_index':0,'clip_index':0})
-                song.tracks[1].arrangement_clips[0].file_path='unrelated.wav'
-                with self.assertRaisesRegex(RuntimeError,'другие клипы'):
-                    bridge._execute({'action':'native_cleanup'})
-                self.assertEqual(len(song.tracks),2)
-            finally:
-                bridge.disconnect()
+    def test_existing_take_lane_is_not_reused_or_modified(self):
+        lane=Lane(); lane.name='My vocal take'; lane.arrangement_clips=[Clip(self.path)]
+        self.song.tracks[0].take_lanes.append(lane)
+        result=self.run_worker(); self.assertEqual(result['state'],'done',result)
+        self.assertEqual(len(self.song.tracks[0].take_lanes),2)
+        self.assertIs(self.song.tracks[0].take_lanes[0],lane)
+        self.assertEqual(lane.arrangement_clips[0].file_path,self.path)
 
-    def test_safe_probe_never_edits_source_clip(self):
-        with tempfile.TemporaryDirectory() as d:
-            path=os.path.join(d,'source.wav')
-            self.make_audio(path)
-            song=Song(path)
-            original=song.tracks[0].arrangement_clips[0]
-            before=(original.start_time,original.end_time,
-                    original.loop_start,original.loop_end,
-                    original.file_path,original.muted)
-            bridge=ClearSilenceBridge(song)
-            try:
-                data=bridge._probe_region(song,{'track_index':0,'clip_index':0})
-                self.assertTrue(data['ok'],data)
-                self.assertEqual(len(data['results']),2,data)
-                self.assertTrue(data['original_tracks_unchanged'],data)
-                self.assertEqual(len(song.tracks),1)
-                self.assertIs(song.tracks[0].arrangement_clips[0],original)
-                after=(original.start_time,original.end_time,
-                       original.loop_start,original.loop_end,
-                       original.file_path,original.muted)
-                self.assertEqual(before,after)
-            finally:
-                bridge.disconnect()
+    def test_changed_source_after_analysis_refused(self):
+        plan=self.plan(); self.song.tracks[0].arrangement_clips[0].gain=.3
+        result=self.run_worker(plan=plan); self.assertEqual(result['state'],'error',result)
+        self.assertEqual(self.song.tracks[0].delete_calls,0); self.assertEqual(self.song.undo_calls,0)
 
-    def test_stale_bridge_rejected(self):
-        sentinel={'created':time.time(),'entries':[{'name':'whatever'}], 'allow_empty':False}
-        app.batch_plans['old-bridge']=sentinel
-        def old(action, **kw):
-            if action=='status': return {'ok':True,'version':'0.4.0','protocol':2,'actions':['replace'],'can_replace':True}
-            raise ValueError('old')
-        try:
-            with patch.object(app,'bridge',old):
-                with self.assertRaisesRegex(RuntimeError,'старый ClearSilenceBridge'):
-                    app.start_batch({'plan_id':'old-bridge'})
-            self.assertIs(app.batch_plans['old-bridge'],sentinel)
-        finally:
-            app.batch_plans.pop('old-bridge',None)
+    def test_changed_neighbour_rolls_back(self):
+        neighbour=Clip(self.path,24.,28.); neighbour.muted=True
+        track=self.song.tracks[0]; track.arrangement_clips.append(neighbour)
+        create=track.create_audio_clip
+        def overwrite(path,beat):
+            neighbour.end_time=25.
+            return create(path,beat)
+        track.create_audio_clip=overwrite
+        result=self.run_worker(); self.assertEqual(result['state'],'error',result)
+        self.assertEqual(self.song.undo_calls,1)
+        self.assertEqual(self.song.tracks[0].arrangement_clips[1].end_time,28.)
 
-if __name__=='__main__':unittest.main()
+    def test_cancel_leaves_audio_and_arrangement_untouched(self):
+        result=self.run_worker(cancel=True); self.assertEqual(result['state'],'canceled')
+        self.assertEqual(self.song.tracks[0].delete_calls,0); self.assert_source_intact()
+
+    def test_stale_bridge_and_native_actions_are_refused(self):
+        with patch.object(app,'bridge',return_value=dict(protocol=11,actions=['auto_begin'],version='0.6.2')):
+            with self.assertRaisesRegex(RuntimeError,'старый'): app.require_replace_bridge()
+        self.assertFalse(self.call('auto_begin')['ok'])
+        self.assertNotIn('auto_begin',self.call('status')['actions'])
+
+    def test_socket_start_batch_runs_restored_worker(self):
+        # Exercise the real authenticated socket and main-thread dispatcher.
+        token=str(self.home/'bridge_token')
+        with patch.object(bridge_module,'TOKEN_FILE',token),patch.object(app,'TOKEN_FILE',token):
+            surface=ClearSilenceBridge(self.song)
+            self.addCleanup(surface.disconnect)
+            deadline=time.time()+3
+            while surface._server_socket is None and time.time()<deadline: time.sleep(.005)
+            self.assertIsNotNone(surface._server_socket)
+            # The setUp method patches app.bridge. Obtain the original function
+            # from that patch so this integration test uses the socket instead.
+            import socket,json
+            def wire(action,**kwargs):
+                with socket.create_connection(('127.0.0.1',bridge_module.PORT),timeout=3) as conn:
+                    conn.sendall((json.dumps(dict(token=Path(token).read_text().strip(),action=action,**kwargs))+'\n').encode())
+                    data=b''
+                    while not data.endswith(b'\n'): data+=conn.recv(65536)
+                result=json.loads(data)
+                if not result.get('ok'): raise RuntimeError(result.get('error'))
+                return result
+            results=[]
+            def start():
+                try:
+                    plan=app.plan_batch(dict(track_indices=[0],strength=50))
+                    job=app.start_batch(dict(plan_id=plan['plan_id']))
+                    while app.get_job(job['job_id'])['state']=='running': time.sleep(.005)
+                    results.append(app.get_job(job['job_id']))
+                except Exception as exc: results.append(dict(error=str(exc)))
+            with patch.object(app,'bridge',wire):
+                thread=threading.Thread(target=start,daemon=True); thread.start(); deadline=time.time()+8
+                while thread.is_alive() and time.time()<deadline: surface.update_display(); time.sleep(.005)
+                thread.join(.1)
+            self.assertFalse(thread.is_alive()); self.assertEqual(results[0].get('state'),'done',results)
+            self.assertEqual(len(self.song.tracks[0].take_lanes),1)

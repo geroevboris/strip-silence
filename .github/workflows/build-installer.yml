@@ -7,7 +7,6 @@ on:
       - 'packaging/**'
       - '.github/workflows/build-installer.yml'
       - 'app.py'
-      - 'native_automation.py'
       - 'audio.py'
       - 'silence_math.py'
       - 'ui.html'
@@ -15,7 +14,7 @@ on:
       - 'tests/**'
   workflow_dispatch:
   # Repeat a failed macOS runner allocation without manual intervention.
-  # Release-check below stops retries once v0.6.2 is published.
+  # Release-check below stops retries once v0.7.0 is published.
   schedule:
     - cron: '23 1,7,13,19 * * *'
 
@@ -42,9 +41,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && gh release view 'v0.6.2-lane-selection' >/dev/null 2>&1; then
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && gh release view 'v0.7.0-take-lanes' >/dev/null 2>&1; then
             echo 'published=true' >> "$GITHUB_OUTPUT"
-            echo 'v0.6.2 already published; macOS job is no longer needed.'
+            echo 'v0.7.0 already published; macOS job is no longer needed.'
           else
             echo 'published=false' >> "$GITHUB_OUTPUT"
           fi
@@ -53,9 +52,21 @@ jobs:
           python-version: '3.11'
       - name: Python syntax and unit tests
         run: |
-          python -m compileall -q app.py audio.py silence_math.py native_automation.py ClearSilenceBridge packaging tests
+          python -m compileall -q app.py audio.py silence_math.py ClearSilenceBridge packaging tests
           python -m unittest discover -s tests -v
           PYTHONPATH=packaging python -m unittest discover -s packaging/tests -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check interface and capture preview
+        run: |
+          npm install --prefix "$RUNNER_TEMP/ui-check" playwright@1.58.2
+          "$RUNNER_TEMP/ui-check/node_modules/.bin/playwright" install --with-deps chromium
+          NODE_PATH="$RUNNER_TEMP/ui-check/node_modules" UI_OUTPUT="$RUNNER_TEMP" node tests/check_ui.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Clear-Silence-interface
+          path: ${{ runner.temp }}/clear-silence-ui.png
 
   pkg-arm64:
     # The macos-15 arm64 pool has lately cancelled queued jobs without
@@ -74,25 +85,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install 'pyinstaller>=6.10,<7' 'pywebview>=5,<7' 'pyobjc-framework-WebKit>=10,<13'
-      - name: Validate macOS AppleScript syntax
-        run: |
-          python - <<'PY'
-          import native_automation
-          import subprocess
-          import tempfile
-          from pathlib import Path
-          with tempfile.TemporaryDirectory() as d:
-              source=Path(d)/'native.applescript'
-              compiled=Path(d)/'native.scpt'
-              source.write_text(native_automation.APPLESCRIPT, encoding='utf-8')
-              subprocess.run(['/usr/bin/osacompile','-o',str(compiled),str(source)],check=True)
-          PY
       - name: Build native app and PKG
         run: bash packaging/build_installer.sh
       - name: Upload PKG to workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Clear-Silence-v0.6.2-lane-selection-macOS-Apple-Silicon
+          name: Clear-Silence-v0.7.0-take-lanes-macOS-Apple-Silicon
           path: |
             package-output/*.pkg
             package-output/*.sha256
@@ -101,14 +99,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG='v0.6.2-lane-selection'
-          PKG='package-output/Clear_Silence_0.6.2_macOS_Apple_Silicon.pkg'
+          TAG='v0.7.0-take-lanes'
+          PKG='package-output/Clear_Silence_0.7.0_macOS_Apple_Silicon.pkg'
           SUM="${PKG}.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$PKG" "$SUM" --clobber
           else
             gh release create "$TAG" "$PKG" "$SUM" \
               --target "$GITHUB_SHA" \
-              --title 'Clear Silence v0.6.2 — Content lane selection and native Split + Mute' \
+              --title 'Clear Silence v0.7.0 — Silence removal, Take Lanes and a refreshed interface' \
               --notes-file RELEASE_NOTES.md
           fi

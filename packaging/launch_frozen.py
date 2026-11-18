@@ -25,11 +25,10 @@ def show_message(title, message):
 if '--self-test' in sys.argv:
     import app
     import audio
-    import native_automation
     import webview
-    assert app.APP_VERSION == '0.6.2'
+    assert app.APP_VERSION == '0.7.0'
     assert app.HTML.startswith('<!doctype html>')
-    assert callable(native_automation.send_native_split)
+    assert callable(app._batch_worker)
     assert callable(audio.WavFile)
     assert callable(install_bridge)
     print('Clear Silence frozen application import check OK')
