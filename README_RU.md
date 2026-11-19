@@ -1,4 +1,4 @@
-# Clear Silence 0.7.0
+# Clear Silence 0.7.1
 
 Компактная утилита удаления тишины из WAV-клипов в Arrangement Ableton Live 12 на macOS Apple Silicon.
 
@@ -6,12 +6,12 @@
 
 ## Установка
 
-1. Закрой прежний Clear Silence и установи PKG из [Releases](https://github.com/geroevboris/strip-silence/releases/tag/v0.7.0-take-lanes).
+1. Закрой прежний Clear Silence и установи PKG из [Releases](https://github.com/geroevboris/strip-silence/releases/tag/v0.7.1-import-timing).
 2. Один раз запусти Clear Silence из Applications: приложение обновит Remote Script.
 3. Полностью перезапусти Ableton. В Settings → Link, Tempo & MIDI → Control Surface должен быть выбран **ClearSilenceBridge**, Input/Output — None.
 4. Останови воспроизведение, выбери дорожку / все / нужные дорожки. Настрой очистку по волне и нажми **Убрать тишину**.
 
-В окне должна отображаться версия 0.7.0. Старый Bridge не допускается к обработке.
+В окне должна отображаться версия 0.7.1. В этой версии импорт ждёт применения Warp в отдельных циклах Live до чтения длительности и границ. При ошибке показываются этап, поле, ожидаемое и фактическое значения; журнал находится в `~/Library/Logs/ClearSilence/clear-silence.log`. Старый Bridge не допускается к обработке.
 
 ## Предпросмотр
 

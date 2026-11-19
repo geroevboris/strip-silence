@@ -21,11 +21,13 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.7.0'
+APP_VERSION = '0.7.1'
 plans = {}
 batch_plans = {}
 jobs = {}
 lock = threading.Lock()
+logger = logging.getLogger('clearsilence')
+logger.addHandler(logging.NullHandler())
 
 
 def bridge(action, **args):
@@ -36,7 +38,7 @@ def bridge(action, **args):
     req = {'token': token, 'action': action, **args}
     try:
         with socket.create_connection(('127.0.0.1', BRIDGE_PORT), timeout=3) as conn:
-            conn.settimeout(30)
+            conn.settimeout(190 if action == 'replace' else 30)
             conn.sendall((json.dumps(req, ensure_ascii=False) + '\n').encode('utf-8'))
             out = bytearray()
             while not out.endswith(b'\n') and len(out) < 1000000:
@@ -57,8 +59,8 @@ def bridge(action, **args):
 def require_replace_bridge():
     """Fail BEFORE creating files or editing Live when the installed script is old."""
     status = bridge('status')
-    if status.get('protocol') != 12 or 'replace' not in status.get('actions', []):
-        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.7.0.' % status.get('version', 'неизвестен'))
+    if status.get('protocol') != 13 or 'replace' not in status.get('actions', []):
+        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.7.1.' % status.get('version', 'неизвестен'))
     if not status.get('can_replace', False):
         raise RuntimeError('Live не предоставил безопасные операции Undo. Замена клипов отключена.')
     return status
@@ -288,6 +290,7 @@ def _batch_worker(job_id, plan):
         with lock:
             jobs[job_id].update(kw)
     completed=0
+    active_label=''
     errors=[]
     output_dir=os.path.join(OUTPUT_ROOT, time.strftime('%Y%m%d-%H%M%S')+'-'+secrets.token_hex(4))
     try:
@@ -305,7 +308,8 @@ def _batch_worker(job_id, plan):
             if canceled:
                 set_job(state='canceled',message='Остановлено после %d клипов. Уже заменённые клипы не отменены.' % completed)
                 return
-            set_job(current=k+1, message='Обрабатывается: '+e['label'])
+            active_label=e['label']
+            set_job(current=k+1, message='Обрабатывается: '+active_label)
             wav=WavFile(e['file_path'])
             folder=os.path.join(output_dir, 'track_%03d_clip_%03d' % (e['track_index'],k))
             os.makedirs(folder, exist_ok=False)
@@ -318,14 +322,14 @@ def _batch_worker(job_id, plan):
                 backup_path=os.path.join(folder, 'original.wav')
                 wav.write_slice(first,end,backup_path)
                 backup={'path':backup_path, 'time':e['source']['start'], 'end':e['source']['end'],
-                        'lane_name':'Clear Silence · Original · '+job_id[:12]}
+                        'lane_name':'Clear Silence · Original · '+job_id[:12], 'frames':end-first}
             frags=[]
             for n,(a,b) in enumerate(e['segments']):
                 path=os.path.join(folder, 'part_%04d.wav' % (n+1))
                 wav.write_slice(a,b,path)
                 beat_start=e['source']['start'] + ((a / wav.rate)-e['source']['file_offset']) * e['tempo']/60
                 beat_end=beat_start + (b-a)/wav.rate * e['tempo']/60
-                frags.append({'path':path,'time':beat_start,'end':beat_end})
+                frags.append({'path':path,'time':beat_start,'end':beat_end,'frames':b-a})
             # Give Live a chance to verify source identity after prior edits on same track.
             listing=bridge('list')
             track=next((t for t in listing['tracks'] if t['index']==e['track_index']),None)
@@ -339,8 +343,8 @@ def _batch_worker(job_id, plan):
         set_job(state='done', message='Готово: %d клипов очищено. %s' % (completed, 'Оригиналы — в Take Lanes.' if plan.get('backup_originals', True) else 'Исходные WAV сохранены.'))
     except Exception as exc:
         errors.append(str(exc))
-        set_job(state='error', message=('Ошибка после %d успешных замен. Следующие клипы не обрабатывались. '
-                                        'Проверь последнюю дорожку. %s' % (completed,exc)), errors=errors)
+        logger.exception('job=%s clip=%s completed=%d',job_id,active_label,completed)
+        set_job(state='error', message='Остановлено после %d/%d клипов. %s\n%s' % (completed,len(entries),active_label,exc), errors=errors)
     finally:
         set_job(output_dir=output_dir)
 
@@ -460,6 +464,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
+    try:
+        log_dir=os.path.expanduser('~/Library/Logs/ClearSilence')
+        os.makedirs(log_dir, exist_ok=True)
+        handler=RotatingFileHandler(os.path.join(log_dir,'clear-silence.log'),maxBytes=1000000,backupCount=2,encoding='utf-8')
+        handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    except OSError:
+        pass
     # The window is deliberately NOT a regular browser tab. Cocoa/WebKit is
     # hosted in its own macOS application window via pywebview.
     if sys.platform != 'darwin':

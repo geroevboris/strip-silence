@@ -13,7 +13,7 @@ const root=path.resolve(__dirname,'..');
    const req=route.request(),url=new URL(req.url());calls.push(url.pathname);
    if(url.pathname==='/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(root,'ui.html'),'utf8')});
    let data={ok:true};
-   if(url.pathname==='/api/status')data={ok:true,protocol:12,can_replace:true,actions:['replace']};
+   if(url.pathname==='/api/status')data={ok:true,protocol:13,can_replace:true,actions:['replace']};
    if(url.pathname==='/api/list')data={ok:true,selected_track_index:0,tracks:[{index:0,name:'Lead vocal',clips:[{index:0,name:'Vocal · Verse 02'}],can_take_lanes:true},{index:1,name:'Double L',clips:[{index:0,name:'Verse 02'}]}]};
    if(url.pathname==='/api/clip/profile')data=profile;
    if(url.pathname==='/api/batch/analyze'){if(!req.postDataJSON().backup_originals)throw Error('Backup missing');data={ok:true,plan_id:'test',skipped_count:0};}

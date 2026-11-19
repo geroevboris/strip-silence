@@ -4,6 +4,7 @@ These tests do not claim to run Ableton Live; macOS CI builds the actual app.
 """
 import copy
 import math
+import queue
 import os
 from pathlib import Path
 import struct
@@ -22,7 +23,7 @@ class ControlSurface:
     def __init__(self,c): self._song=c
     def song(self): return self._song
     def log_message(self,*args): pass
-    def update_display(self): pass
+    def update_display(self): self._song.tick()
     def disconnect(self): pass
 surf.ControlSurface=ControlSurface
 sys.modules['_Framework']=frame; sys.modules['_Framework.ControlSurface']=surf
@@ -38,15 +39,51 @@ class Clip:
         self.loop_start=offset; self.loop_end=offset+(ed-st)/2
 
 class Lane:
+    clip_type=Clip
     return_none=False; wrong_length=False; fail_create=False
     def __init__(self): self.name='Take'; self.arrangement_clips=[]
     def create_audio_clip(self,path,beat):
         if self.fail_create: raise RuntimeError('Simulated file import failure')
         with wave.open(path,'rb') as f: duration=f.getnframes()/f.getframerate()
-        c=Clip(path,beat,beat+duration*2)
+        c=self.clip_type(path,beat,beat+duration*2)
         if self.wrong_length: c.end_time+=.5
         self.arrangement_clips.append(c)
         return None if self.return_none else c
+
+class DeferredClip(Clip):
+    """Model the documented deferred Warp setter and stale beat geometry."""
+    early_false=False
+    never_settles=False
+    def __init__(self,path,st,ed):
+        super().__init__(path,st,ed)
+        self._real_end=ed
+        self._duration=(ed-st)/2
+        self.end_time=ed+.75
+        self.loop_end=self._duration*2
+        self._warp=True
+        self._ticks=None
+    @property
+    def warping(self):
+        return False if self.early_false and self._ticks is not None else self._warp
+    @warping.setter
+    def warping(self,value):
+        if value: self._warp=True
+        else: self._ticks=2
+    def __setattr__(self,name,value):
+        if name in ('loop_start','loop_end') and getattr(self,'_warp',False):
+            raise AssertionError('Wrote seconds while Warp conversion was still pending')
+        super().__setattr__(name,value)
+    def tick(self):
+        if self._ticks is None or self.never_settles: return
+        self._ticks-=1
+        if self._ticks<=0:
+            self._warp=False
+            self.end_time=self._real_end
+            self.loop_end=self._duration
+            self._ticks=None
+
+class DeferredLane(Lane):
+    clip_type=DeferredClip
 
 class Track(Lane):
     has_audio_input=True; is_frozen=False
@@ -65,6 +102,12 @@ class Song:
     def begin_undo_step(self): self._pending=copy.deepcopy(self.tracks)
     def end_undo_step(self): self._undo=self._pending
     def undo(self): self.undo_calls+=1; self.tracks=self._undo
+    def tick(self):
+        for track in self.tracks:
+            for lane in [track] + track.take_lanes:
+                for clip in lane.arrangement_clips:
+                    advance=getattr(clip,'tick',None)
+                    if advance: advance()
     def create_audio_track(self,i): self.tracks.insert(i,Track([]))
     def delete_track(self,i): self.tracks.pop(i)
 
@@ -93,7 +136,14 @@ class ReplacementTests(unittest.TestCase):
         app.jobs.clear(); app.batch_plans.clear()
         self.addCleanup(app.jobs.clear); self.addCleanup(app.batch_plans.clear)
 
-    def call(self,action,**kwargs): return self.bridge._execute(dict(action=action,**kwargs))
+    def call(self,action,**kwargs):
+        result=self.bridge._execute(dict(action=action,**kwargs))
+        if not isinstance(result,types.GeneratorType): return result
+        for _ in range(1000):
+            try: next(result)
+            except StopIteration as done: return done.value
+            self.song.tick()
+        self.fail('Replacement generator did not finish')
     def plan(self,backup=True):
         result=app.plan_batch(dict(track_indices=list(range(len(self.song.tracks))),strength=50,backup_originals=backup))
         return app.batch_plans.pop(result['plan_id'])
@@ -217,10 +267,104 @@ class ReplacementTests(unittest.TestCase):
         self.assertEqual(self.song.tracks[0].delete_calls,0); self.assert_source_intact()
 
     def test_stale_bridge_and_native_actions_are_refused(self):
-        with patch.object(app,'bridge',return_value=dict(protocol=11,actions=['auto_begin'],version='0.6.2')):
+        with patch.object(app,'bridge',return_value=dict(protocol=12,actions=['replace'],version='0.7.0')):
             with self.assertRaisesRegex(RuntimeError,'старый'): app.require_replace_bridge()
         self.assertFalse(self.call('auto_begin')['ok'])
         self.assertNotIn('auto_begin',self.call('status')['actions'])
+
+    def test_deferred_warp_waits_before_reading_bounds_and_markers(self):
+        track=self.song.tracks[0]
+        track.clip_type=DeferredClip; track.lane_factory=DeferredLane
+        result=self.run_worker()
+        self.assertEqual(result['state'],'done',result)
+        self.assertEqual(len(track.arrangement_clips),2)
+        self.assertTrue(all(not c.warping for c in track.arrangement_clips))
+        self.assertEqual(track.take_lanes[0].arrangement_clips[0].end_time,20.)
+        self.assert_source_intact()
+
+    def test_false_warp_getter_does_not_allow_same_event_geometry_check(self):
+        class EarlyClip(DeferredClip): early_false=True
+        class EarlyLane(Lane): clip_type=EarlyClip
+        track=self.song.tracks[0]
+        track.clip_type=EarlyClip; track.lane_factory=EarlyLane
+        result=self.run_worker()
+        self.assertEqual(result['state'],'done',result)
+
+    def test_warp_that_does_not_settle_rolls_back_before_source_deletion(self):
+        class StuckClip(DeferredClip): never_settles=True
+        class StuckLane(Lane): clip_type=StuckClip
+        track=self.song.tracks[0]; track.lane_factory=StuckLane
+        result=self.run_worker()
+        self.assertEqual(result['state'],'error',result)
+        self.assertIn('резерв Take Lane: Warp',result['message'])
+        self.assertEqual(track.delete_calls,0)
+        self.assertEqual(self.song.undo_calls,1)
+        self.assertEqual(self.song.tracks[0].arrangement_clips[0].file_path,self.path)
+
+    def test_import_restores_full_new_file_markers_after_warp_is_off(self):
+        class CroppedLane(Lane):
+            def create_audio_clip(self,path,beat):
+                clip=super().create_audio_clip(path,beat)
+                clip.loop_start=.02; clip.loop_end-=.03
+                return clip
+        self.song.tracks[0].lane_factory=CroppedLane
+        result=self.run_worker()
+        self.assertEqual(result['state'],'done',result)
+        clip=self.song.tracks[0].take_lanes[0].arrangement_clips[0]
+        self.assertEqual((clip.loop_start,clip.loop_end),(0.,2.))
+
+    def test_equivalent_file_path_is_accepted_by_identity(self):
+        class AliasLane(Lane):
+            def create_audio_clip(self,path,beat):
+                clip=super().create_audio_clip(path,beat)
+                alias=Path(path).with_suffix('.alias.wav'); alias.symlink_to(path)
+                clip.file_path=str(alias)
+                return clip
+        self.song.tracks[0].lane_factory=AliasLane
+        result=self.run_worker(); self.assertEqual(result['state'],'done',result)
+
+    def test_boundary_error_names_stage_field_expected_and_observed(self):
+        class BadLane(Lane): wrong_length=True
+        self.song.tracks[0].lane_factory=BadLane
+        result=self.run_worker()
+        self.assertEqual(result['state'],'error',result)
+        self.assertIn('резерв Take Lane: end_time: Live=20.50000000; ожидалось=20.00000000',result['message'])
+        self.assertIn('Undo',result['message'])
+
+    def test_deadline_exception_rolls_back_pending_backup(self):
+        original_call=self.call
+        def expire(action,**kwargs):
+            if action!='replace': return original_call(action,**kwargs)
+            command=self.bridge._execute(dict(action=action,**kwargs))
+            next(command)  # Backup imported, Warp conversion has not run yet.
+            command.throw(RuntimeError('Simulated command deadline'))
+        with patch.object(app,'bridge',expire): result=self.run_worker()
+        self.assertEqual(result['state'],'error',result)
+        self.assertEqual(self.song.undo_calls,1)
+        self.assertEqual(self.song.tracks[0].take_lanes,[])
+        self.assertEqual(self.song.tracks[0].arrangement_clips[0].file_path,self.path)
+
+    def test_dispatcher_returns_to_live_between_generator_steps(self):
+        self.bridge._requests=queue.Queue(); self.bridge._pending_command=None
+        reply=queue.Queue(); seen=[]
+        def command():
+            seen.append('created'); yield
+            seen.append('validated'); return dict(ok=True)
+        self.bridge._requests.put((dict(action='replace'),reply,time.monotonic()+5))
+        with patch.object(self.bridge,'_execute',return_value=command()):
+            self.bridge.update_display()
+            self.assertEqual(seen,['created']); self.assertTrue(reply.empty())
+            self.bridge.update_display()
+        self.assertEqual(seen,['created','validated'])
+        self.assertTrue(reply.get_nowait()['ok'])
+        self.assertIsNone(self.bridge._pending_command)
+
+    def test_dispatcher_never_starts_an_expired_queued_edit(self):
+        self.bridge._requests=queue.Queue(); self.bridge._pending_command=None
+        reply=queue.Queue(); self.bridge._requests.put((dict(action='replace'),reply,0.))
+        with patch.object(self.bridge,'_execute') as execute:
+            self.bridge.update_display(); execute.assert_not_called()
+        self.assertFalse(reply.get_nowait()['ok'])
 
     def test_socket_start_batch_runs_restored_worker(self):
         # Exercise the real authenticated socket and main-thread dispatcher.

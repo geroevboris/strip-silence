@@ -1,12 +1,15 @@
-Clear Silence 0.7.0 — silence removal, Take Lanes and a refreshed interface.
+Clear Silence 0.7.1 — wait for Live audio imports before checking boundaries.
 
-- Restored the original workflow: replace source clips on their existing tracks with sample-preserving WAV fragments; remove quiet intervals. Removed native Split, keyboard shortcuts and Accessibility automation.
-- Optional original-audio backups in Take Lanes, enabled by default. Complete visible clip audio, including silence, is copied without resampling and verified before the main clip is removed. One new lane per processed track per run. Existing take lanes remain unchanged.
-- Warm charcoal/orange interface; amber kept regions and lavender-grey hatching for removed regions. Instant slider preview. Transparent rounded app icon without an outer black square.
-- Stop and Undo the current clip on an import/boundary/backup error. Preserve source WAVs and neighbouring clips. Cancellation stops after the current clip.
+Fixes a confirmed sequencing defect in 0.7.0: the bridge set Warp off and immediately validated clip geometry in the same Live event. Live documents Warp changes as deferred. This could reject a valid import using stale duration/marker values, including an original-audio backup in a Take Lane.
 
-Install the PKG, launch Clear Silence once to update its bridge, then fully restart Ableton Live. Use Control Surface ClearSilenceBridge with Input/Output None. Both components must be 0.7.0 (protocol 12). No Accessibility setup is needed for processing.
+- Return control to Live between import, Warp conversion, full-file marker setup and validation. Never sleep on the Live main thread. Require separate unwarped observations before writing seconds-based markers.
+- Use the generated WAV's exact frame count for the imported audio range. Keep boundary checks and backup-before-delete ordering, and roll back the current clip on an actual mismatch.
+- Accept equivalent paths referring to the same file; do not reject aliases merely because their strings differ.
+- Report the affected stage (Take Lane backup or numbered fragment), property, actual value, expected value and tolerance. Record failures in ~/Library/Logs/ClearSilence/clear-silence.log.
+- Bound pending commands with deadlines; expired queued edits never start. Exceptions/timeouts pass through Undo and close the active transaction.
 
-To reveal originals: track header → Show Take Lanes → Clear Silence · Original · …. To restore audio: select the take material → Copy Selection to Main Lane. Backups are copies of the visible unwarped audio region with original gain, not complete clones of all Live clip metadata. Live's import fade settings apply. WAV only; Warp/Loop, pitch, envelopes and groove are skipped. For transferring a Set use Collect All and Save; generated files remain in ~/Music/ClearSilence Output.
+Close Clear Silence, install the PKG, launch it once to update ClearSilenceBridge, then fully restart both Live and Clear Silence. The interface should show 0.7.1; protocol 13 rejects the old 0.7.0 bridge. The interface design and silence detection settings are unchanged.
 
-Validation: sample-preserving WAV tests; seven clips on two tracks; trimmed sources; silent clips; backup-first ordering; import failures and rollback; neighbouring clips; cancellation; authenticated socket processing; UI interactions and rendering; macOS arm64 frozen-app import check and installer verification. Ableton Live itself is not available in CI, so Take Lanes runtime behaviour still requires confirmation on the user's installation.
+Validation: 37 Python tests plus 3 bridge installer tests, including deferred Warp state, early False getters, a conversion that never settles, full-file marker restoration, path aliases, detailed mismatch reporting, transaction rollback and per-event command dispatch. CI also verifies the interface and builds/tests the frozen macOS arm64 app. The reported 0.7.0 error did not identify its failing property, so this release addresses the confirmed sequencing defect without claiming the user's exact failing field has been observed. Actual Live runtime still requires verification.
+
+API reference: https://docs.cycling74.com/apiref/lom/clip/ (warping technical note).

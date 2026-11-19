@@ -26,7 +26,7 @@ if '--self-test' in sys.argv:
     import app
     import audio
     import webview
-    assert app.APP_VERSION == '0.7.0'
+    assert app.APP_VERSION == '0.7.1'
     assert app.HTML.startswith('<!doctype html>')
     assert callable(app._batch_worker)
     assert callable(audio.WavFile)

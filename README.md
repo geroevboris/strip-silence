@@ -1,8 +1,8 @@
-# Clear Silence 0.7.0
+# Clear Silence 0.7.1
 
 Silence removal for WAV clips in Ableton Live 12 Arrangement on macOS Apple Silicon.
 
-[Инструкция на русском](README_RU.md) · [Download installer](https://github.com/geroevboris/strip-silence/releases/tag/v0.7.0-take-lanes)
+[Инструкция на русском](README_RU.md) · [Download installer](https://github.com/geroevboris/strip-silence/releases/tag/v0.7.1-import-timing)
 
 Restores the original rendered-fragment replacement workflow. Kept PCM/float samples are copied without resampling; silent sections disappear from the main lane. Original WAV files are never overwritten. The native keyboard/AX Split + Mute experiment has been removed.
 
@@ -10,6 +10,8 @@ An enabled-by-default option stores the entire visible audio region of each proc
 
 The warm charcoal/orange interface previews kept regions in amber and removed regions in muted lavender hatching. The app icon has true alpha transparency outside the rounded tile.
 
-Protocol 12 exposes only status, list, preview and replace. Source identity and tempo are rechecked per clip. Each clip's backup and replacement share one Undo step. Import boundaries and neighbours are checked; failure rolls back the current clip and stops the batch. Files live in `~/Music/ClearSilence Output`; use Live's Collect All and Save when moving a Set.
+Protocol 13 exposes only status, list, preview and replace. Source identity and tempo are rechecked per clip. Each clip's backup and replacement share one Undo step. Import boundaries and neighbours are checked; failure rolls back the current clip and stops the batch. Files live in `~/Music/ClearSilence Output`; use Live's Collect All and Save when moving a Set.
 
 Run `python -m unittest discover -s tests -v` and `PYTHONPATH=packaging python -m unittest discover -s packaging/tests -v`. CI additionally tests the UI and builds/verifies the frozen macOS app and PKG. Mock tests do not establish runtime compatibility with the user's Live installation.
+
+The 0.7.1 bridge yields to Live between Warp conversion and duration checks, normalizes full-file markers in seconds only once Warp is off, and reports individual mismatching fields. Import requests have bounded deadlines and rollback through the same transaction handler. The app logs failures to `~/Library/Logs/ClearSilence/clear-silence.log`.

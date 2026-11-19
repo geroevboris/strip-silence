@@ -9,12 +9,14 @@ import threading
 import traceback
 import secrets
 import math
+import time
+import types
 from _Framework.ControlSurface import ControlSurface
 
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.7.0'
+VERSION = '0.7.1'
 
 
 def create_instance(c_instance):
@@ -27,6 +29,7 @@ class ClearSilenceBridge(ControlSurface):
         self._requests = queue.Queue(maxsize=32)
         self._shutdown = threading.Event()
         self._server_socket = None
+        self._pending_command = None
         folder = os.path.dirname(TOKEN_FILE)
         os.makedirs(folder, mode=0o700, exist_ok=True)
         if not os.path.isfile(TOKEN_FILE):
@@ -40,6 +43,13 @@ class ClearSilenceBridge(ControlSurface):
         self.log_message('ClearSilenceBridge %s loading (127.0.0.1:%d)' % (VERSION, PORT))
 
     def disconnect(self):
+        if getattr(self, '_pending_command', None) is not None:
+            command, result_q, _deadline = self._pending_command
+            try:
+                command.throw(RuntimeError('Мост отключён во время импорта.'))
+            except (Exception, StopIteration) as exc:
+                self._reply(result_q, {'ok': False, 'error': str(exc)})
+            self._pending_command = None
         self._shutdown.set()
         try:
             if self._server_socket:
@@ -83,11 +93,13 @@ class ClearSilenceBridge(ControlSurface):
                     if request.get('token') != self._token:
                         raise ValueError('Invalid authorization token')
                     response = queue.Queue(maxsize=1)
-                    self._requests.put((request, response), timeout=2)
+                    timeout = 180 if request.get('action') == 'replace' else 25
+                    deadline = time.monotonic() + timeout - 5
+                    self._requests.put((request, response, deadline), timeout=2)
                     try:
-                        result = response.get(timeout=25)
+                        result = response.get(timeout=timeout)
                     except queue.Empty:
-                        raise TimeoutError('Live did not process command in 25 seconds')
+                        raise TimeoutError('Live did not complete the command in %d seconds' % timeout)
                 except Exception as e:
                     result = {'ok': False, 'error': str(e)}
                 try:
@@ -106,21 +118,53 @@ class ClearSilenceBridge(ControlSurface):
 
     def update_display(self):
         super(ClearSilenceBridge, self).update_display()
-        # Never call the Live Object Model from the socket thread.
-        for _ in range(2):
-            try:
-                request, result_q = self._requests.get_nowait()
-            except queue.Empty:
-                break
-            try:
-                result = self._execute(request)
-            except Exception as e:
-                self.log_message('ClearSilence command error: ' + traceback.format_exc())
-                result = {'ok': False, 'error': str(e)}
-            try:
-                result_q.put_nowait(result)
-            except queue.Full:
-                pass
+        # A generator advances at most once per Live event. Returning to Live
+        # is required: Warp setters are deferred internally, so sleeping here
+        # or advancing the generator in a loop would keep reading stale state.
+        if getattr(self, '_pending_command', None) is not None:
+            self._advance_command()
+            return
+        try:
+            request, result_q, deadline = self._requests.get_nowait()
+        except queue.Empty:
+            return
+        try:
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Команда устарела до начала обработки; изменений нет.')
+            result = self._execute(request)
+            if isinstance(result, types.GeneratorType):
+                self._pending_command = (result, result_q, deadline)
+                self._advance_command()
+                return
+        except Exception as exc:
+            self.log_message('ClearSilence command error: ' + traceback.format_exc())
+            result = {'ok': False, 'error': str(exc)}
+        self._reply(result_q, result)
+
+    @staticmethod
+    def _reply(result_q, result):
+        try:
+            result_q.put_nowait(result)
+        except queue.Full:
+            pass
+
+    def _advance_command(self):
+        command, result_q, deadline = self._pending_command
+        try:
+            if time.monotonic() >= deadline:
+                # Throw through the transaction's exception handler so Undo and
+                # end_undo_step run. close() would skip that rollback handler.
+                command.throw(RuntimeError('Live не завершил импорт вовремя.'))
+            else:
+                next(command)
+            return
+        except StopIteration as done:
+            result = done.value
+        except Exception as exc:
+            self.log_message('ClearSilence command error: ' + traceback.format_exc())
+            result = {'ok': False, 'error': str(exc)}
+        self._pending_command = None
+        self._reply(result_q, result)
 
     def _execute(self, req):
         action = req.get('action')
@@ -128,7 +172,7 @@ class ClearSilenceBridge(ControlSurface):
         if action == 'status':
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': len(song.tracks),
                     'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo')),
-                    'protocol': 12, 'actions': ['status', 'list', 'preview', 'replace']}
+                    'protocol': 13, 'actions': ['status', 'list', 'preview', 'replace']}
         if action == 'list':
             tracks = []
             for ti, track in enumerate(song.tracks):
@@ -236,7 +280,7 @@ class ClearSilenceBridge(ControlSurface):
         return {'ok': False, 'error': 'Unknown action'}
 
     def _replace(self, song, req):
-        """A single clip replacement on its EXISTING track; one undo unit per clip.
+        """A yielded replacement on its EXISTING track; one undo unit per clip.
 
         Network and audio file work never happen on the Live UI thread. All
         fragment files must already exist. On error, one undo group is rolled
@@ -315,7 +359,17 @@ class ClearSilenceBridge(ControlSurface):
                 raise RuntimeError('Take Lanes unavailable; original clip has not been removed')
             if not str(backup['lane_name']).startswith('Clear Silence · Original · '):
                 raise ValueError('Invalid backup lane name')
-        tolerance = max(.0001, 2.1 * float(song.tempo) / 60 / int(req['rate']))
+        rate = int(req['rate'])
+        if rate <= 0:
+            raise ValueError('Invalid sample rate')
+        tolerance = max(.0001, 2.1 * float(song.tempo) / 60 / rate)
+        for item in items + ([backup] if backup else []):
+            frames = item.get('frames')
+            if not isinstance(frames, int) or isinstance(frames, bool) or frames <= 0:
+                raise ValueError('Generated audio must declare its sample count')
+            if abs(frames / rate * float(song.tempo) / 60 -
+                   (float(item['end'])-float(item['time']))) > tolerance:
+                raise ValueError('Generated audio sample count does not match its timeline range')
         protected = self._clip_signatures([c for c in track.arrangement_clips if c != clip])
         before_lanes = list(getattr(track, 'take_lanes', []))
         before_main = self._clip_signatures(track.arrangement_clips)
@@ -348,21 +402,29 @@ class ClearSilenceBridge(ControlSurface):
                        float(c.end_time) > float(backup['time'])+tolerance for c in lane_before):
                     raise RuntimeError('Backup lane already contains audio in this range')
                 preserved = self._clip_signatures(lane_before)
-                self._insert_audio(lane, backup, source, tolerance)
+                yield from self._insert_audio(lane, backup, source, tolerance, rate, 'резерв Take Lane')
                 did_change = True
                 remaining = [c for c in lane.arrangement_clips if c in lane_before]
                 if self._clip_signatures(remaining) != preserved:
                     raise RuntimeError('Existing backup clips changed; rolling back')
                 # Only delete the main clip AFTER the complete backup is verified.
+            if song.is_playing or song.record_mode:
+                raise RuntimeError('Воспроизведение запущено во время импорта; замена остановлена.')
+            if (abs(float(song.tempo)-float(req['tempo'])) > .00001 or
+                    self._clip_signatures(track.arrangement_clips) != before_main):
+                raise RuntimeError('Темп или исходные клипы изменились во время импорта.')
             track.delete_clip(clip)
             did_change = True
             # Check deletion before inserting at identical positions.
             if len(track.arrangement_clips) >= int(req['before_count']):
                 raise RuntimeError('Original clip was not removed; aborting')
             made = []
-            for item in items:
-                made.append(self._insert_audio(track, item, source, tolerance))
+            for index, item in enumerate(items):
+                made.append((yield from self._insert_audio(
+                    track, item, source, tolerance, rate, 'фрагмент %d/%d' % (index+1, len(items)))))
                 n += 1
+                if song.is_playing or song.record_mode or abs(float(song.tempo)-float(req['tempo'])) > .00001:
+                    raise RuntimeError('Воспроизведение или темп изменились во время импорта.')
             if self._clip_signatures([c for c in track.arrangement_clips if c not in made]) != protected:
                 raise RuntimeError('Neighbouring clips changed; rolling back')
             if len(track.arrangement_clips) != int(req['before_count'])-1+n:
@@ -384,8 +446,8 @@ class ClearSilenceBridge(ControlSurface):
                     song.undo()
                 except Exception as rollback_error:
                     raise RuntimeError('REPLACEMENT FAILED: %s. ALSO UNDO FAILED: %s. Stop and inspect the project; original WAV is intact.' % (error, rollback_error))
-                raise RuntimeError('Replacement failed and Live undo was invoked: %s. Inspect this track before continuing.' % error)
-            raise RuntimeError('Replacement refused before modification: %s' % error)
+                raise RuntimeError('Замена отменена через Undo. %s' % error)
+            raise RuntimeError('Замена остановлена до изменения основного клипа. %s' % error)
         return {'ok': True, 'created': n, 'removed': 1, 'backed_up': bool(backup),
                 'track_name': str(track.name), 'clip_name': source['name']}
 
@@ -401,27 +463,62 @@ class ClearSilenceBridge(ControlSurface):
                       for c in clips)
 
     @staticmethod
-    def _insert_audio(container, item, source, tolerance):
+    def _same_audio_path(first, second):
+        try:
+            return os.path.samefile(str(first), str(second))
+        except OSError:
+            return os.path.realpath(str(first)) == os.path.realpath(str(second))
+
+    def _insert_audio(self, container, item, source, tolerance, rate, stage):
         before = list(container.arrangement_clips)
         returned = container.create_audio_clip(str(item['path']), float(item['time']))
-        # Some Live bindings return None; discover only the clip just created.
         added = [c for c in container.arrangement_clips if c not in before]
         if len(added) != 1:
-            raise RuntimeError('Live did not create exactly one audio clip')
+            raise RuntimeError('%s: Live создал %d клипов вместо одного.' % (stage, len(added)))
         clip = added[0]
         if returned is not None and returned != clip:
-            raise RuntimeError('Live returned an unexpected audio clip')
+            raise RuntimeError('%s: Live вернул другой клип.' % stage)
         clip.warping = False
+        # Even a getter already returning False does not guarantee that Live's
+        # deferred geometry change has been applied. Always yield at least once.
+        ready = 0
+        for _ in range(30):
+            yield
+            ready = ready + 1 if not clip.warping else 0
+            if ready >= 2:
+                break
+        else:
+            raise RuntimeError('%s: Warp остался включён после ожидания Live.' % stage)
         clip.looping = False
         clip.name = str(source['name'])[:120]
         clip.gain = float(source['gain'])
         clip.muted = bool(source['muted'])
         clip.color = int(source['color'])
-        if (str(clip.file_path) != str(item['path']) or
-                abs(float(clip.start_time)-float(item['time'])) > tolerance or
-                abs(float(clip.end_time)-float(item['end'])) > tolerance or
-                abs(float(clip.loop_start)) > .0001 or
-                abs(float(clip.gain)-float(source['gain'])) > .0001 or
-                bool(clip.muted) != bool(source['muted'])):
-            raise RuntimeError('Live created audio at unexpected boundaries/settings; rolling back')
+        # These are NEW, full-file WAVs, so their visible source range is known
+        # exactly. Loop markers use seconds only after Warp has actually turned
+        # off. Do not touch start_marker/end_marker (their units differ).
+        duration = int(item['frames']) / rate
+        if abs(float(clip.loop_start)) > 1 / rate:
+            clip.loop_start = 0.
+        if abs(float(clip.loop_end)-duration) > 1 / rate:
+            clip.loop_end = duration
+        yield
+        problems = []
+        if not self._same_audio_path(clip.file_path, item['path']):
+            problems.append('file_path: Live=%r; ожидалось=%r' % (str(clip.file_path), str(item['path'])))
+        for name, wanted, epsilon in (
+                ('start_time', float(item['time']), tolerance),
+                ('end_time', float(item['end']), tolerance),
+                ('loop_start', 0., 1.1 / rate),
+                ('loop_end', duration, 1.1 / rate),
+                ('gain', float(source['gain']), .0001)):
+            actual = float(getattr(clip, name))
+            if not math.isfinite(actual) or abs(actual-wanted) > epsilon:
+                problems.append('%s: Live=%.8f; ожидалось=%.8f; допуск=%.8f' % (name, actual, wanted, epsilon))
+        for name, wanted in (('warping', False), ('looping', False), ('muted', bool(source['muted']))):
+            actual = bool(getattr(clip, name))
+            if actual != wanted:
+                problems.append('%s: Live=%s; ожидалось=%s' % (name, actual, wanted))
+        if problems:
+            raise RuntimeError('%s: %s' % (stage, '; '.join(problems)))
         return clip
