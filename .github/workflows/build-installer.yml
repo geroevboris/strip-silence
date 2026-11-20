@@ -14,7 +14,7 @@ on:
       - 'tests/**'
   workflow_dispatch:
   # Repeat a failed macOS runner allocation without manual intervention.
-  # Release-check below stops retries once v0.7.1 is published.
+  # Release-check below stops retries once v0.7.2 is published.
   schedule:
     - cron: '23 1,7,13,19 * * *'
 
@@ -41,9 +41,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && gh release view 'v0.7.1-import-timing' >/dev/null 2>&1; then
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && gh release view 'v0.7.2-wave-zoom' >/dev/null 2>&1; then
             echo 'published=true' >> "$GITHUB_OUTPUT"
-            echo 'v0.7.1 already published; macOS job is no longer needed.'
+            echo 'v0.7.2 already published; macOS job is no longer needed.'
           else
             echo 'published=false' >> "$GITHUB_OUTPUT"
           fi
@@ -66,7 +66,7 @@ jobs:
         if: always()
         with:
           name: Clear-Silence-interface
-          path: ${{ runner.temp }}/clear-silence-ui.png
+          path: ${{ runner.temp }}/clear-silence-ui*.png
 
   pkg-arm64:
     # The macos-15 arm64 pool has lately cancelled queued jobs without
@@ -90,7 +90,7 @@ jobs:
       - name: Upload PKG to workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Clear-Silence-v0.7.1-import-timing-macOS-Apple-Silicon
+          name: Clear-Silence-v0.7.2-wave-zoom-macOS-Apple-Silicon
           path: |
             package-output/*.pkg
             package-output/*.sha256
@@ -99,14 +99,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG='v0.7.1-import-timing'
-          PKG='package-output/Clear_Silence_0.7.1_macOS_Apple_Silicon.pkg'
+          TAG='v0.7.2-wave-zoom'
+          PKG='package-output/Clear_Silence_0.7.2_macOS_Apple_Silicon.pkg'
           SUM="${PKG}.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$PKG" "$SUM" --clobber
           else
             gh release create "$TAG" "$PKG" "$SUM" \
               --target "$GITHUB_SHA" \
-              --title 'Clear Silence v0.7.1 — Wait for Live audio imports' \
+              --title 'Clear Silence v0.7.2 — Clearer waveform and zoom' \
               --notes-file RELEASE_NOTES.md
           fi

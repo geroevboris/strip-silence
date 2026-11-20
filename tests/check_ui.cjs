@@ -3,12 +3,12 @@ const fs=require('fs');
 const path=require('path');
 const root=path.resolve(__dirname,'..');
 (async()=>{
- const browser=await chromium.launch({channel:process.env.UI_BROWSER_CHANNEL || undefined,headless:true,args:['--no-sandbox']});
- const page=await browser.newPage({viewport:{width:460,height:640},deviceScaleFactor:2});
+ const browser=await chromium.launch({channel:process.env.UI_BROWSER_CHANNEL || undefined,executablePath:process.env.UI_BROWSER_EXECUTABLE || undefined,headless:true,args:['--no-sandbox']});
+ const page=await browser.newPage({viewport:{width:460,height:690},deviceScaleFactor:2});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const waveform=Array.from({length:550},(_,i)=>{const t=i/550;return Math.max(.002, Math.sin(t*71)**2*(t>.07&&t<.29||t>.46&&t<.72||t>.82&&t<.92?.35:.003)*(0.4+0.6*Math.sin(i*13)**2))});
  const profile={ok:true,duration:8,peaks:Array.from({length:800},(_,i)=>waveform[Math.floor(i/800*550)]),hop:480,rate:48000,first_frame:0,end_frame:384000,waveform};
- let calls=[];
+ let calls=[],analyzed=null;
  await page.route('http://127.0.0.1:47862/**',async route=>{
    const req=route.request(),url=new URL(req.url());calls.push(url.pathname);
    if(url.pathname==='/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(root,'ui.html'),'utf8')});
@@ -16,19 +16,64 @@ const root=path.resolve(__dirname,'..');
    if(url.pathname==='/api/status')data={ok:true,protocol:13,can_replace:true,actions:['replace']};
    if(url.pathname==='/api/list')data={ok:true,selected_track_index:0,tracks:[{index:0,name:'Lead vocal',clips:[{index:0,name:'Vocal · Verse 02'}],can_take_lanes:true},{index:1,name:'Double L',clips:[{index:0,name:'Verse 02'}]}]};
    if(url.pathname==='/api/clip/profile')data=profile;
-   if(url.pathname==='/api/batch/analyze'){if(!req.postDataJSON().backup_originals)throw Error('Backup missing');data={ok:true,plan_id:'test',skipped_count:0};}
+   if(url.pathname==='/api/batch/analyze'){analyzed=req.postDataJSON();if(!analyzed.backup_originals)throw Error('Backup missing');data={ok:true,plan_id:'test',skipped_count:0};}
    if(url.pathname==='/api/batch/start')data={ok:true,job_id:'test'};
    if(url.pathname==='/api/batch/status')data={ok:true,state:'done',message:'Готово: 1 клип очищен. Оригинал — в Take Lanes.',completed:1,total:1};
    return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
  });
- await page.goto('http://127.0.0.1:47862/');await page.waitForFunction(()=>document.getElementById('metrics').textContent.includes('Вырезается'));
+ await page.goto('http://127.0.0.1:47862/');await page.waitForFunction(()=>document.getElementById('metrics').textContent.includes('вырезается'));
  await page.screenshot({fullPage:true,path:path.join(process.env.UI_OUTPUT || root,'clear-silence-ui.png')});
  const a=await page.locator('#metrics').innerText();
+ const start=()=>page.locator('#overview').getAttribute('aria-valuenow').then(Number);
+ const maxStart=()=>page.locator('#overview').getAttribute('aria-valuemax').then(Number);
+ const check=(ok,message)=>{if(!ok)throw Error(message)};
+ check(await page.locator('#zoomOut').isDisabled(),'Full-clip zoom out should be disabled');
+ await page.locator('#zoomIn').click();
+ check(await start()===2&&await maxStart()===4,'2x zoom should preserve centre');
+ check(await page.locator('#metrics').innerText()===a,'Zoom changed full-clip totals');
+ await page.locator('#overview').focus();await page.keyboard.press('End');
+ check(await start()===4,'Navigator End should reach the clip end');
+ await page.keyboard.press('Home');check(await start()===0,'Navigator Home should reach the clip start');
+ const waveBox=await page.locator('#waveform').boundingBox();
+ await page.mouse.move(waveBox.x+waveBox.width*.75,waveBox.y+40);await page.mouse.down();
+ await page.mouse.move(waveBox.x+waveBox.width*.25,waveBox.y+40,{steps:5});await page.mouse.up();
+ check(Math.abs(await start()-2)<.03,'Dragging the main wave should pan through the audio');
+ const overviewBox=await page.locator('#overview').boundingBox();
+ await page.mouse.click(overviewBox.x+overviewBox.width*.97,overviewBox.y+10);
+ check(await start()===4,'Clicking the overview should recenter and clamp at end');
+ await page.locator('#zoomIn').click();await page.locator('#zoomIn').click();
+ check(await page.locator('#zoomIn').isDisabled(),'Zoom should stop at a one-second window');
+ check(await maxStart()===7,'Zoom window should now span one second');
+ await page.screenshot({fullPage:true,path:path.join(process.env.UI_OUTPUT || root,'clear-silence-ui-zoom.png')});
+ const zoomStart=await start(),zoomMax=await maxStart();
  await page.locator('#strength').fill('90');await page.locator('#strength').dispatchEvent('input');
  const b=await page.locator('#metrics').innerText();if(a===b)throw Error('Wave not reacting');
+ check(await start()===zoomStart&&await maxStart()===zoomMax,'Changing strength reset the viewport');
+ check(!calls.includes('/api/batch/analyze'),'Viewing sent an analysis/edit command');
+ await page.locator('#zoomFit').click();
+ check(await start()===0&&await maxStart()===0,'Fit should show the full clip');
+ check(await page.locator('#metrics').innerText()===b,'Fit changed the analysis');
+ // The source profile supplies detail even when the old 550-bin overview is blank.
+ await page.evaluate(()=>{previewData={...previewData,waveform:previewData.waveform.map(()=>0)};drawWave()});
+ const nonBackground=await page.evaluate(()=>{
+   const c=document.getElementById('waveform'),ctx=c.getContext('2d');
+   const d=ctx.getImageData(0,Math.round(c.height*.28),c.width,1).data;
+   let count=0;for(let i=0;i<d.length;i+=4)if(d[i]>230&&d[i+1]>150&&d[i+2]<170)count++;
+   return count;
+ });
+ check(nonBackground>5,'Detailed waveform should come from the analysis peaks');
+ // Loading a different preview must clear the old waveform/viewport immediately.
+ await page.route('**/api/clip/profile',async route=>{await new Promise(r=>setTimeout(r,200));await route.fulfill({contentType:'application/json',body:JSON.stringify({...profile,duration:.6,peaks:profile.peaks.slice(0,60),end_frame:28800})})});
+ await page.locator('#zoomIn').click();await page.locator('.refresh').click();
+ await page.waitForFunction(()=>document.getElementById('metrics').textContent.includes('Загружаю'));
+ check(await page.locator('#zoomIn').isDisabled(),'Stale preview controls active while loading');
+ await page.waitForFunction(()=>document.getElementById('metrics').textContent.includes('вырезается'));
+ check(await start()===0&&await maxStart()===0,'New clip retained the previous viewport');
+ check(await page.locator('#zoomIn').isDisabled(),'Subsecond clips should already fit the maximum detail');
  await page.locator('#probe').click();await page.waitForFunction(()=>document.getElementById('log').textContent.includes('Готово'));
- for(const width of [420,460]){await page.setViewportSize({width,height:640});const bounds=await page.evaluate(()=>({scroll:document.body.scrollWidth,width:innerWidth,height:document.body.scrollHeight}));if(bounds.scroll>width)throw Error('Horizontal overflow');if(bounds.height>640)throw Error('Vertical overflow: '+bounds.height);console.log({width,bounds});}
+ check(analyzed.strength===90&&analyzed.track_indices.length===1&&analyzed.track_indices[0]===0,'Viewport changed batch scope or settings');
+ for(const width of [420,460]){await page.setViewportSize({width,height:680});const bounds=await page.evaluate(()=>({scroll:document.body.scrollWidth,width:innerWidth,height:document.body.scrollHeight}));if(bounds.scroll>width)throw Error('Horizontal overflow');if(bounds.height>680)throw Error('Vertical overflow: '+bounds.height);console.log({width,bounds});}
  if(errors.length)throw Error(errors.join('\n'));
- console.log('UI: live preview, backup option, completed job, no console errors passed');
+ console.log('UI: zoom, pan, overview, reset, detailed peaks, live strength preview, stale loading, batch settings and compact layout passed');
  await browser.close();
 })();

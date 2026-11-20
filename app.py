@@ -21,7 +21,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.7.1'
+APP_VERSION = '0.7.2'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -496,7 +496,7 @@ if __name__ == '__main__':
     t.start()
     try:
         window = webview.create_window('Clear Silence', 'http://127.0.0.1:%d' % WEB_PORT,
-                                       width=460, height=670, min_size=(420, 660),
+                                       width=460, height=720, min_size=(420, 710),
                                        js_api=NativeWindowApi())
         webview.start(gui='cocoa', debug=False)
     finally:

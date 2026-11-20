@@ -1,14 +1,18 @@
-# Clear Silence 0.7.1
+# Clear Silence 0.7.2
 
 Silence removal for WAV clips in Ableton Live 12 Arrangement on macOS Apple Silicon.
 
-[Инструкция на русском](README_RU.md) · [Download installer](https://github.com/geroevboris/strip-silence/releases/tag/v0.7.1-import-timing)
+[Инструкция на русском](README_RU.md) · [Download installer](https://github.com/geroevboris/strip-silence/releases/tag/v0.7.2-wave-zoom)
 
 Restores the original rendered-fragment replacement workflow. Kept PCM/float samples are copied without resampling; silent sections disappear from the main lane. Original WAV files are never overwritten. The native keyboard/AX Split + Mute experiment has been removed.
 
 An enabled-by-default option stores the entire visible audio region of each processed clip in a new Take Lane before replacement. Copies keep their timeline position, gain and colour; existing lanes remain untouched. This is an audio backup, not a clone of all hidden clip properties. Unsupported Warp/Loop, pitch, envelopes and groove are skipped. Live's import fade settings apply to newly created clips. Disable the option for the original replacement-only workflow.
 
-The warm charcoal/orange interface previews kept regions in amber and removed regions in muted lavender hatching. The app icon has true alpha transparency outside the rounded tile.
+The warm charcoal/orange interface previews kept regions in amber and removed regions in bright coral fill/hatching with clear boundaries. Zoom buttons, direct waveform dragging and an overview navigator let you inspect down to a one-second window. Rendering max-pools the existing 10 ms analysis peaks, so zoom reveals real detail without rereading the audio. Totals and processing scope always cover the full clip/selected tracks. The app icon has true alpha transparency outside the rounded tile.
+
+Audio tracks inside collapsed/nested groups are included normally. Select their children explicitly to process only that group; selecting a group header in Live is not a group-only scope and may cause the UI to choose All. Existing Take Lane clips are not analyzed or edited; supported comp clips on the main lane are processed normally.
+
+Version 0.7.2 changes only the preview and window height. The 0.7.1 bridge and protocol 13 are unchanged, so updating from 0.7.1 requires closing/reopening Clear Silence but not restarting Live.
 
 Protocol 13 exposes only status, list, preview and replace. Source identity and tempo are rechecked per clip. Each clip's backup and replacement share one Undo step. Import boundaries and neighbours are checked; failure rolls back the current clip and stops the batch. Files live in `~/Music/ClearSilence Output`; use Live's Collect All and Save when moving a Set.
 

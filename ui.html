@@ -1,13 +1,13 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Clear Silence 0.7.1</title>
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Clear Silence 0.7.2</title>
 <style>
-:root{color-scheme:dark;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;background:#151412;color:#f1ece6;--accent:#ed985b;--keep:#f5bc81;--cut:#a49bb2;--edge:#38332e;--muted:#afa69b}
+:root{color-scheme:dark;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;background:#151412;color:#f1ece6;--accent:#ed985b;--keep:#f5bc81;--cut:#f28b79;--edge:#38332e;--muted:#afa69b}
 *{box-sizing:border-box}body{margin:0;padding:10px;width:100%;min-width:388px}button,select,input{font:inherit}button{border-radius:8px;background:#302b26;border:1px solid #4b4239;color:#e9e1d8;padding:7px 10px;cursor:pointer;transition:background .12s}button:hover:not(:disabled){background:#41372e}button:disabled{opacity:.42;cursor:default}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.title{display:flex;gap:10px;align-items:center;margin:0 0 10px}.symbol{display:grid;place-items:center;width:36px;height:36px;background:#27221c;border:1px solid #4b3624;border-radius:10px;color:var(--accent);flex-shrink:0}.title strong{font-size:17px;font-weight:650;letter-spacing:-.3px}.title small{display:block;color:var(--muted);font-size:10px;margin-top:1px}#status{margin-left:auto;text-align:right;color:#c7bcaf;max-width:132px;font-size:10px}#status.error{color:#f8ac98}
-.card{background:#201d1a;border:1px solid var(--edge);border-radius:12px;margin:0 0 6px;padding:8px}.hrow{display:flex;align-items:center;justify-content:space-between;gap:9px}.label{font-size:10px;font-weight:600;letter-spacing:1px;color:var(--muted)}.refresh{border:0;background:none;padding:0 3px;font-size:19px;line-height:20px;color:#c1b3a5}.toggle{display:flex;gap:3px;background:#171513;border:1px solid #38312b;border-radius:8px;padding:3px;margin-top:6px}.toggle button{flex:1;border:0;background:transparent;font-size:11px;padding:5px 5px;border-radius:5px;color:#b8aea3}.toggle button.active{background:#463122;color:#ffcd9b;font-weight:650}.scope{margin:6px 0 0;color:#d5cbbf;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.scope.warn{color:#f8ac98}#customPanel{display:none;max-height:105px;overflow:auto;padding:6px 1px;border-top:1px solid var(--edge);margin-top:8px}#customPanel.open{display:block}.track{display:flex;align-items:center;gap:7px;font-size:11px;padding:5px 3px}.track span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.track small{color:var(--muted)}input[type=checkbox]{accent-color:var(--accent)}select{width:100%;min-width:0;margin:7px 0 6px;border-radius:7px;border:1px solid #453c33;background:#191613;color:#e9e1d8;padding:7px;font-size:11px}.wave{background:#141210;border:1px solid #463b30;border-radius:7px;overflow:hidden}#waveform{display:block;height:100px;width:100%}.legend{display:flex;justify-content:space-between;gap:10px;color:#ded3c7;font-size:11px;margin-top:8px}.swatch{display:inline-block;vertical-align:-2px;width:12px;height:12px;border-radius:3px;margin-right:6px;background:var(--keep)}.swatch.cut{background:repeating-linear-gradient(135deg,#a49bb2 0 2px,#3b3543 2px 5px);border:1px solid #a49bb2}#metrics{color:var(--muted);font-size:10px;margin-top:5px;min-height:15px;font-variant-numeric:tabular-nums}
+.card{background:#201d1a;border:1px solid var(--edge);border-radius:12px;margin:0 0 6px;padding:8px}.hrow{display:flex;align-items:center;justify-content:space-between;gap:9px}.label{font-size:10px;font-weight:600;letter-spacing:1px;color:var(--muted)}.refresh{border:0;background:none;padding:0 3px;font-size:19px;line-height:20px;color:#c1b3a5}.toggle{display:flex;gap:3px;background:#171513;border:1px solid #38312b;border-radius:8px;padding:3px;margin-top:6px}.toggle button{flex:1;border:0;background:transparent;font-size:11px;padding:5px 5px;border-radius:5px;color:#b8aea3}.toggle button.active{background:#463122;color:#ffcd9b;font-weight:650}.scope{margin:6px 0 0;color:#d5cbbf;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.scope.warn{color:#f8ac98}#customPanel{display:none;max-height:105px;overflow:auto;padding:6px 1px;border-top:1px solid var(--edge);margin-top:8px}#customPanel.open{display:block}.track{display:flex;align-items:center;gap:7px;font-size:11px;padding:5px 3px}.track span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.track small{color:var(--muted)}input[type=checkbox]{accent-color:var(--accent)}select{width:100%;min-width:0;margin:7px 0 6px;border-radius:7px;border:1px solid #453c33;background:#191613;color:#e9e1d8;padding:7px;font-size:11px}.wave{background:#141210;border:1px solid #463b30;border-radius:7px;overflow:hidden}#waveform{display:block;height:120px;width:100%;touch-action:none}#waveform.zoomed{cursor:grab}#waveform.dragging{cursor:grabbing}#overview{display:block;height:22px;width:100%;border-top:1px solid #463b30;cursor:pointer;touch-action:none}.zoom{display:flex;align-items:center;gap:4px}.zoom button{height:24px;min-width:26px;padding:0 6px;border-radius:5px;font-size:15px}.zoom #zoomFit{font-size:10px;margin-left:3px}.zoom output{min-width:33px;text-align:center;font-size:10px;color:#d5cbbf;font-variant-numeric:tabular-nums}.wave:focus-within{outline:1px solid var(--accent);outline-offset:2px}.legend{display:flex;justify-content:space-between;gap:10px;color:#ded3c7;font-size:11px;margin-top:8px}.swatch{display:inline-block;vertical-align:-2px;width:12px;height:12px;border-radius:3px;margin-right:6px;background:var(--keep)}.swatch.cut{background:repeating-linear-gradient(135deg,#f28b79 0 2px,#733e3b 2px 5px);border:1px solid #f28b79}#metrics{color:var(--muted);font-size:10px;margin-top:5px;min-height:15px;font-variant-numeric:tabular-nums}
 .strength{display:flex;align-items:baseline;justify-content:space-between;gap:8px}.strength strong{font-size:24px;font-weight:550;letter-spacing:-1px;font-variant-numeric:tabular-nums;color:var(--accent)}#strength{width:100%;accent-color:var(--accent);margin:7px 0 2px;height:18px}.hints{display:flex;justify-content:space-between;color:var(--muted);font-size:10px}.backup{display:flex;align-items:center;gap:7px;font-size:11px;margin:9px 0 0;padding-top:8px;border-top:1px solid var(--edge);color:#d2c7bb}.backup input{margin:0;width:14px;height:14px}.primary{width:100%;min-height:42px;background:var(--accent);border-color:var(--accent);color:#26190f;font-weight:700;font-size:13px;margin-top:9px}.primary:hover:not(:disabled){background:#ffae70}.primary:disabled{opacity:.45}#log{color:#bfb2a5;font-size:10.5px;white-space:pre-wrap;margin-top:7px;min-height:16px;max-height:65px;overflow-y:auto;overflow-wrap:anywhere}#log.error{color:#ffb29b}.foot{color:#a99a8b;font-size:10px;display:flex;justify-content:space-between;gap:8px;align-items:center;padding:1px 2px 0}.link{background:none;padding:0;border:0;color:#c2b3a4;font-size:10px}
 </style></head><body>
-<header class="title"><span class="symbol" aria-hidden="true"><svg width="25" height="22" viewBox="0 0 25 22" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M2 9v4M6 5v12M10 8v6M16 5v12M20 2v18M24 8v6"/></svg></span><span><strong>Clear Silence</strong><small>Очистка пауз · v0.7.1</small></span><span id="status">Подключение…</span></header>
+<header class="title"><span class="symbol" aria-hidden="true"><svg width="25" height="22" viewBox="0 0 25 22" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M2 9v4M6 5v12M10 8v6M16 5v12M20 2v18M24 8v6"/></svg></span><span><strong>Clear Silence</strong><small>Очистка пауз · v0.7.2</small></span><span id="status">Подключение…</span></header>
 <section class="card"><div class="hrow"><span class="label">ОБЛАСТЬ</span><button class="refresh" onclick="refresh()" title="Обновить проект" aria-label="Обновить проект">↻</button></div><div class="toggle"><button data-mode="current" onclick="setMode('current')">Дорожка</button><button data-mode="all" onclick="setMode('all')">Все</button><button data-mode="custom" onclick="setMode('custom')">Выбрать…</button></div><div class="scope" id="scopeLabel">Читаю Arrangement…</div><div id="customPanel"></div></section>
-<section class="card"><div class="hrow"><span class="label">ПРЕДПРОСМОТР</span><span style="font-size:10px;color:var(--muted)">Без изменений проекта</span></div><select id="clipPick" aria-label="Клип для просмотра" onchange="previewClip()"><option>Поиск клипов…</option></select><div class="wave"><canvas id="waveform" aria-label="Янтарным — остаётся, серо-лиловой штриховкой — вырезается"></canvas></div><div class="legend"><span><i class="swatch"></i>Остаётся</span><span><i class="swatch cut"></i>Вырезается</span></div><div id="metrics">Выбери клип</div></section>
+<section class="card"><div class="hrow"><span class="label">ПРЕДПРОСМОТР</span><div class="zoom" role="group" aria-label="Масштаб волны"><button id="zoomOut" onclick="zoomWave(.5)" title="Уменьшить" aria-label="Уменьшить волну" disabled>−</button><output id="zoomLevel" aria-label="Масштаб">1×</output><button id="zoomIn" onclick="zoomWave(2)" title="Увеличить" aria-label="Увеличить волну" disabled>+</button><button id="zoomFit" onclick="fitWave()" title="Показать клип целиком" disabled>Весь</button></div></div><select id="clipPick" aria-label="Клип для просмотра" onchange="previewClip()"><option>Поиск клипов…</option></select><div class="wave"><canvas id="waveform" tabindex="0" role="img" aria-label="Янтарным — остаётся, коралловой штриховкой — вырезается" title="+ / − — масштаб · перетаскивание — перемещение · двойной щелчок — весь клип"></canvas><canvas id="overview" tabindex="0" role="slider" aria-label="Положение видимого участка клипа" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" title="Обзор клипа: щёлкни или перетащи рамку. Стрелки — перемещение."></canvas></div><div class="legend"><span><i class="swatch"></i>Остаётся</span><span><i class="swatch cut"></i>Вырезается</span></div><div id="metrics">Выбери клип</div></section>
 <section class="card"><div class="strength"><span class="label">СТЕПЕНЬ ОЧИСТКИ</span><strong id="level">50%</strong></div><input id="strength" aria-label="Мягче или жёстче" type="range" min="0" max="100" step="1" value="50"><div class="hints"><span>Мягче</span><span>Сильнее</span></div><label class="backup" title="Полная аудиокопия каждого обрабатываемого клипа до очистки, без пересчёта сэмплов"><input id="backup" type="checkbox" checked>Сохранить оригиналы в Take Lanes</label><button id="probe" class="primary" onclick="runStrip()" disabled>Убрать тишину</button>
 <button id="cancel" onclick="cancelStrip()" style="display:none;width:100%;margin-top:8px">Остановить обработку</button><div id="log">Исходные WAV остаются целыми.</div></section>
 <div class="foot"><span>WAV · Warp OFF · Live 12.4.6</span><button class="link" onclick="quitApp()">Закрыть</button></div>
@@ -21,24 +21,148 @@ function updateScope(){document.querySelectorAll('[data-mode]').forEach(x=>x.cla
 function drawTracks(){const root=$('customPanel');root.replaceChildren();for(const tr of tracks){const lab=document.createElement('label');lab.className='track';const cb=document.createElement('input');cb.type='checkbox';cb.checked=customIndices.has(tr.index);cb.onchange=()=>{cb.checked?customIndices.add(tr.index):customIndices.delete(tr.index);updateScope();drawPicker()};const sp=document.createElement('span');sp.textContent=tr.name;const note=document.createElement('small');note.textContent=tr.clips.length+' кл.';lab.append(cb,sp,note);root.appendChild(lab)}}
 function setMode(v){if(running)return;mode=v;updateScope();drawPicker()}
 function drawPicker(){const pick=$('clipPick'),previous=pick.value;pick.replaceChildren();for(const tr of tracks){if(!ids().includes(tr.index))continue;for(const clip of tr.clips){const option=document.createElement('option');option.value=tr.index+':'+clip.index;option.textContent=tr.name+' / '+clip.name;pick.appendChild(option)}}if([...pick.options].some(o=>o.value===previous))pick.value=previous;previewClip()}
-async function refresh(){if(running)return;try{const s=await api('/api/status');bridgeReady=s.protocol===13&&s.can_replace&&Array.isArray(s.actions)&&s.actions.includes('replace');const r=await api('/api/list');tracks=r.tracks||[];selectedTrackIndex=Number.isInteger(r.selected_track_index)?r.selected_track_index:null;if(!initialized){mode=tracks.some(x=>x.index===selectedTrackIndex)?'current':'all';customIndices=new Set(tracks.map(x=>x.index));initialized=true}else{customIndices=new Set([...customIndices].filter(n=>tracks.some(t=>t.index===n)));if(mode==='current'&&!tracks.some(x=>x.index===selectedTrackIndex))mode='all'}drawTracks();updateScope();drawPicker();$('status').className=bridgeReady?'':'error';$('status').textContent=bridgeReady?'● Live подключён':'Требуется новый Bridge';$('log').className='';$('log').textContent=bridgeReady?'Выбери дорожки и настрой очистку по волне.':'Установи v0.7.1 и полностью перезапусти Ableton (старый скрипт отключён).'}catch(e){bridgeReady=false;tracks=[];$('status').className='error';$('status').textContent='Live не подключён';$('log').className='error';$('log').textContent=e.message;updateScope();drawPicker()}}
-function formatTime(seconds){seconds=Math.max(0,seconds||0);return Math.floor(seconds/60)+':'+('0'+Math.floor(seconds%60)).slice(-2)}
-function computeKept(profile,strength){if(!profile||!profile.peaks)return[];const opts=settings(),{peaks,hop,rate,first_frame,end_frame}=profile,threshold=Math.pow(10,opts.threshold/20);let first=null,last=null,ranges=[];for(let k=0;k<peaks.length;k++){if(peaks[k]>=threshold){if(first===null)first=k;last=k+1}else if(first!==null&&(k-last+1)*hop*1000/rate>=opts.min_silence_ms){ranges.push([first,last]);first=null;last=null}}if(first!==null)ranges.push([first,last]);const pad=Math.round(rate*opts.padding_ms/1000),active=[];for(const [a,b] of ranges){const left=Math.max(first_frame,first_frame+a*hop-pad),right=Math.min(end_frame,first_frame+b*hop+pad);if(active.length&&left<=active[active.length-1][1])active[active.length-1][1]=Math.max(active[active.length-1][1],right);else active.push([left,right])}return active.map(([a,b])=>[(a-first_frame)/rate,(b-first_frame)/rate])}
-function drawWave(){
- const cvs=$('waveform'),width=Math.max(50,cvs.getBoundingClientRect().width),height=100,dpr=window.devicePixelRatio||1;
- cvs.width=Math.round(width*dpr);cvs.height=Math.round(height*dpr);const ctx=cvs.getContext('2d');ctx.scale(dpr,dpr);ctx.fillStyle='#141210';ctx.fillRect(0,0,width,height);
- if(!previewData){ctx.fillStyle='#a99a8b';ctx.font='11px -apple-system';ctx.textAlign='center';ctx.fillText('Здесь появится волна выбранного клипа',width/2,height/2+4);return}
- const duration=previewData.duration||1,kept=computeKept(previewData),wave=previewData.waveform||[];
- // Hatching also distinguishes silence at tiny amplitude and without colour.
- const gap=(left,right)=>{if(right<=left)return;ctx.save();ctx.beginPath();ctx.rect(left,0,right-left,height);ctx.clip();ctx.fillStyle='#302a37';ctx.fillRect(left,0,right-left,height);ctx.strokeStyle='#51465c';ctx.lineWidth=1;for(let x=left-height;x<right;x+=9){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+height,height);ctx.stroke()}ctx.restore()};
- let cursor=0;for(const [a,b] of kept){const x1=a/duration*width,x2=b/duration*width;gap(cursor,x1);ctx.fillStyle='#2b2118';ctx.fillRect(x1,0,x2-x1,height);ctx.fillStyle='#d89456';ctx.fillRect(x1,0,Math.max(1,x2-x1),2);cursor=x2}gap(cursor,width);
- ctx.strokeStyle='#76685d';ctx.globalAlpha=.35;ctx.beginPath();ctx.moveTo(0,height/2);ctx.lineTo(width,height/2);ctx.stroke();ctx.globalAlpha=1;
- const sorted=[...wave].sort((a,b)=>a-b),scale=Math.max(.03,sorted[Math.floor(sorted.length*.96)]||1);
- for(let x=0;x<width;x++){const j=Math.min(wave.length-1,Math.floor(x/width*wave.length));if(j<0)break;const time=x/width*duration,active=kept.some(([a,b])=>time>=a&&time<=b),amp=Math.min(1,(wave[j]||0)/scale)*height*.37;ctx.strokeStyle=active?'#f5bc81':'#b2a8bf';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,height/2-amp);ctx.lineTo(x,height/2+amp);ctx.stroke()}
- ctx.font='10px -apple-system';ctx.fillStyle='#dfd4c8';ctx.fillText('0:00',7,height-7);ctx.textAlign='right';ctx.fillText(formatTime(duration),width-7,height-7);ctx.textAlign='left';
- const keptTime=kept.reduce((n,[a,b])=>n+b-a,0),cutTime=Math.max(0,duration-keptTime);$('metrics').textContent=`Остаётся ${keptTime.toFixed(2)} с  ·  Вырезается ${cutTime.toFixed(2)} с`;
+async function refresh(){if(running)return;try{const s=await api('/api/status');bridgeReady=s.protocol===13&&s.can_replace&&Array.isArray(s.actions)&&s.actions.includes('replace');const r=await api('/api/list');tracks=r.tracks||[];selectedTrackIndex=Number.isInteger(r.selected_track_index)?r.selected_track_index:null;if(!initialized){mode=tracks.some(x=>x.index===selectedTrackIndex)?'current':'all';customIndices=new Set(tracks.map(x=>x.index));initialized=true}else{customIndices=new Set([...customIndices].filter(n=>tracks.some(t=>t.index===n)));if(mode==='current'&&!tracks.some(x=>x.index===selectedTrackIndex))mode='all'}drawTracks();updateScope();drawPicker();$('status').className=bridgeReady?'':'error';$('status').textContent=bridgeReady?'● Live подключён':'Требуется новый Bridge';$('log').className='';$('log').textContent=bridgeReady?'Выбери дорожки и настрой очистку по волне.':'Установи v0.7.2 и полностью перезапусти Ableton (старый скрипт отключён).'}catch(e){bridgeReady=false;tracks=[];$('status').className='error';$('status').textContent='Live не подключён';$('log').className='error';$('log').textContent=e.message;updateScope();drawPicker()}}
+function formatTime(seconds,precise=false){
+ const ms=Math.round(Math.max(0,seconds||0)*1000),whole=Math.floor(ms/1000);
+ return Math.floor(whole/60)+':'+String(whole%60).padStart(2,'0')+(precise?'.'+String(ms%1000).padStart(3,'0'):'');
 }
-async function previewClip(){const value=$('clipPick').value,rev=++revision;if(!/^\d+:\d+$/.test(value)){previewData=null;drawWave();$('metrics').textContent='Нет доступного клипа';return}const [ti,ci]=value.split(':').map(Number);$('metrics').textContent='Загружаю осциллограмму…';try{const p=await api('/api/clip/profile',{track_index:ti,clip_index:ci});if(rev!==revision)return;previewData=p;drawWave()}catch(e){if(rev!==revision)return;previewData=null;drawWave();$('metrics').textContent='Нет предпросмотра: '+e.message}}
+function computeKept(profile,strength){if(!profile||!profile.peaks)return[];const opts=settings(),{peaks,hop,rate,first_frame,end_frame}=profile,threshold=Math.pow(10,opts.threshold/20);let first=null,last=null,ranges=[];for(let k=0;k<peaks.length;k++){if(peaks[k]>=threshold){if(first===null)first=k;last=k+1}else if(first!==null&&(k-last+1)*hop*1000/rate>=opts.min_silence_ms){ranges.push([first,last]);first=null;last=null}}if(first!==null)ranges.push([first,last]);const pad=Math.round(rate*opts.padding_ms/1000),active=[];for(const [a,b] of ranges){const left=Math.max(first_frame,first_frame+a*hop-pad),right=Math.min(end_frame,first_frame+b*hop+pad);if(active.length&&left<=active[active.length-1][1])active[active.length-1][1]=Math.max(active[active.length-1][1],right);else active.push([left,right])}return active.map(([a,b])=>[(a-first_frame)/rate,(b-first_frame)/rate])}
+// Viewing never changes the analysis settings or the batch selection.
+let viewStart=0,viewSpan=0,waveScale=1,waveDrag=null;
+const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+function fitWave(){viewStart=0;viewSpan=previewData?previewData.duration:0;drawWave()}
+function zoomWave(factor,anchor=.5){
+ if(!previewData)return;
+ const duration=previewData.duration,at=viewStart+viewSpan*anchor;
+ viewSpan=clamp(viewSpan/factor,Math.min(1,duration),duration);
+ viewStart=clamp(at-viewSpan*anchor,0,duration-viewSpan);drawWave();
+}
+function panWave(start){
+ if(!previewData)return;
+ viewStart=clamp(start,0,previewData.duration-viewSpan);drawWave();
+}
+function canvasContext(id){
+ const canvas=$(id),rect=canvas.getBoundingClientRect(),width=Math.max(1,rect.width),height=rect.height,dpr=window.devicePixelRatio||1;
+ canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);
+ const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
+ return {ctx,width,height};
+}
+function cutRanges(kept,duration){
+ const cuts=[];let cursor=0;
+ for(const [a,b] of kept){if(a>cursor)cuts.push([cursor,a]);cursor=b}
+ if(cursor<duration)cuts.push([cursor,duration]);return cuts;
+}
+function paintWave(ctx,width,height,start,span,kept,cuts,overview=false){
+ const plotHeight=overview?height:height-20,mid=plotHeight/2;
+ ctx.fillStyle='#241d15';ctx.fillRect(0,0,width,height);
+ const xAt=t=>(t-start)/span*width;
+ for(const [a,b] of cuts){
+  const left=clamp(xAt(a),0,width),right=clamp(xAt(b),0,width);
+  if(right<=left)continue;
+  ctx.fillStyle=overview?'#aa6255':'#733e3b';ctx.fillRect(left,0,right-left,plotHeight);
+  if(overview)continue;
+  ctx.save();ctx.beginPath();ctx.rect(left,0,right-left,plotHeight);ctx.clip();
+  ctx.strokeStyle='#a56158';ctx.lineWidth=1;
+  for(let x=left-plotHeight;x<right;x+=10){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+plotHeight,plotHeight);ctx.stroke()}
+  ctx.restore();ctx.fillStyle='#f28b79';ctx.fillRect(left,0,right-left,3);
+  // True cut boundaries stay distinct even when the waveform is silent.
+  for(const t of [a,b]){const x=xAt(t);if(x>0&&x<width)ctx.fillRect(x-.5,0,1,plotHeight)}
+ }
+ ctx.strokeStyle='#bfa28a';ctx.globalAlpha=.2;ctx.beginPath();ctx.moveTo(0,mid);ctx.lineTo(width,mid);ctx.stroke();ctx.globalAlpha=1;
+ // Max-pool the original 10 ms analysis profile in each visible pixel.
+ // Zoom exposes real additional bins, and short peaks are not skipped at 1x.
+ const peaks=previewData.peaks,step=previewData.hop/previewData.rate;
+ let range=0;
+ for(let x=0;x<width;x++){
+  const t=start+x/width*span,tEnd=Math.min(start+span,start+(x+1)/width*span);
+  const first=clamp(Math.floor(t/step),0,peaks.length-1),end=Math.min(peaks.length,Math.max(first+1,Math.ceil(tEnd/step)));
+  let peak=0;for(let j=first;j<end;j++)peak=Math.max(peak,peaks[j]);
+  while(range<kept.length&&kept[range][1]<=t)range++;
+  const active=range<kept.length&&kept[range][0]<=t;
+  const amp=Math.min(1,peak/waveScale)*plotHeight*.39;
+  ctx.strokeStyle=active?'#f5bc81':'#ffd0c3';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x,mid-amp);ctx.lineTo(x,mid+amp);ctx.stroke();
+ }
+ if(overview)return;
+ ctx.fillStyle='#171310';ctx.fillRect(0,plotHeight,width,height-plotHeight);
+ ctx.font='10px -apple-system, sans-serif';ctx.fillStyle='#e5d5c7';
+ const precise=span<=10;
+ ctx.textAlign='left';ctx.fillText(formatTime(start,precise),6,height-6);
+ ctx.textAlign='center';ctx.fillText(formatTime(start+span/2,precise),width/2,height-6);
+ ctx.textAlign='right';ctx.fillText(formatTime(start+span,precise),width-6,height-6);ctx.textAlign='left';
+}
+function drawWave(){
+ const main=canvasContext('waveform'),mini=canvasContext('overview');
+ const ready=!!previewData,duration=ready?previewData.duration:0,zoomed=ready&&viewSpan<duration-1e-8;
+ $('zoomIn').disabled=!ready||viewSpan<=Math.min(1,duration)+1e-8;
+ $('zoomOut').disabled=$('zoomFit').disabled=!zoomed;
+ const factor=ready?duration/viewSpan:1;$('zoomLevel').textContent=(factor<10?Number(factor.toFixed(1)):Math.round(factor))+'×';
+ $('waveform').classList.toggle('zoomed',zoomed);
+ const nav=$('overview');nav.setAttribute('aria-valuemax',String(Math.max(0,duration-viewSpan)));nav.setAttribute('aria-valuenow',String(viewStart));nav.setAttribute('aria-disabled',String(!zoomed));
+ if(!ready){
+  for(const {ctx,width,height} of [main,mini]){ctx.fillStyle='#141210';ctx.fillRect(0,0,width,height)}
+  main.ctx.fillStyle='#a99a8b';main.ctx.font='11px -apple-system';main.ctx.textAlign='center';main.ctx.fillText('Здесь появится волна выбранного клипа',main.width/2,main.height/2+4);
+  nav.setAttribute('aria-valuetext','Нет клипа');return;
+ }
+ const kept=computeKept(previewData),cuts=cutRanges(kept,duration);
+ paintWave(main.ctx,main.width,main.height,viewStart,viewSpan,kept,cuts);
+ paintWave(mini.ctx,mini.width,mini.height,0,duration,kept,cuts,true);
+ const left=viewStart/duration*mini.width,right=(viewStart+viewSpan)/duration*mini.width;
+ mini.ctx.fillStyle='#100d0bc9';mini.ctx.fillRect(0,0,left,mini.height);mini.ctx.fillRect(right,0,mini.width-right,mini.height);
+ mini.ctx.strokeStyle='#ffe4c3';mini.ctx.lineWidth=1.5;mini.ctx.strokeRect(left+.75,.75,Math.max(1,right-left-1.5),mini.height-1.5);
+ nav.setAttribute('aria-valuetext',formatTime(viewStart,true)+' — '+formatTime(viewStart+viewSpan,true));
+ const keptTime=kept.reduce((n,[a,b])=>n+b-a,0),cutTime=Math.max(0,duration-keptTime);
+ $('metrics').textContent=`Весь клип: остаётся ${keptTime.toFixed(2)} с · вырезается ${cutTime.toFixed(2)} с`;
+}
+async function previewClip(){
+ const value=$('clipPick').value,rev=++revision;
+ previewData=null;viewStart=0;viewSpan=0;waveDrag=null;drawWave();
+ if(!/^\d+:\d+$/.test(value)){$('metrics').textContent='Нет доступного клипа';return}
+ const [ti,ci]=value.split(':').map(Number);$('metrics').textContent='Загружаю осциллограмму…';
+ try{
+  const p=await api('/api/clip/profile',{track_index:ti,clip_index:ci});if(rev!==revision)return;
+  previewData=p;viewSpan=p.duration;
+  const sorted=[...p.peaks].sort((a,b)=>a-b);waveScale=Math.max(.03,sorted[Math.floor(sorted.length*.96)]||1);
+  drawWave();
+ }catch(e){if(rev!==revision)return;$('metrics').textContent='Нет предпросмотра: '+e.message}
+}
+for(const id of ['waveform','overview']){
+ const canvas=$(id),isOverview=id==='overview';
+ canvas.addEventListener('pointerdown',e=>{
+  if(!previewData||e.button!==0||viewSpan>=previewData.duration)return;
+  const rect=canvas.getBoundingClientRect(),ratio=clamp((e.clientX-rect.left)/rect.width,0,1);
+  if(isOverview){
+   const at=ratio*previewData.duration;
+   if(at<viewStart||at>viewStart+viewSpan)panWave(at-viewSpan/2);
+  }
+  waveDrag={id,pointer:e.pointerId,x:e.clientX,start:viewStart,width:rect.width,span:viewSpan};
+  canvas.setPointerCapture(e.pointerId);canvas.focus();canvas.classList.add('dragging');e.preventDefault();
+ });
+ canvas.addEventListener('pointermove',e=>{
+  if(!waveDrag||waveDrag.id!==id||waveDrag.pointer!==e.pointerId)return;
+  const scale=isOverview?previewData.duration:-waveDrag.span;
+  panWave(waveDrag.start+(e.clientX-waveDrag.x)/waveDrag.width*scale);
+ });
+ const endDrag=()=>{waveDrag=null;canvas.classList.remove('dragging')};
+ canvas.addEventListener('pointerup',endDrag);canvas.addEventListener('pointercancel',endDrag);canvas.addEventListener('lostpointercapture',endDrag);
+ canvas.addEventListener('dblclick',fitWave);
+ canvas.addEventListener('keydown',e=>{
+  if(!previewData)return;
+  if(e.key==='+'||e.key==='=')zoomWave(2);
+  else if(e.key==='-')zoomWave(.5);
+  else if(e.key==='0')fitWave();
+  else if(e.key==='ArrowLeft')panWave(viewStart-viewSpan*.2);
+  else if(e.key==='ArrowRight')panWave(viewStart+viewSpan*.2);
+  else if(e.key==='Home')panWave(0);
+  else if(e.key==='End')panWave(previewData.duration-viewSpan);
+  else return;e.preventDefault();
+ });
+}
+$('waveform').addEventListener('wheel',e=>{
+ if(!previewData)return;
+ if(e.ctrlKey||e.metaKey){e.preventDefault();const rect=e.currentTarget.getBoundingClientRect();zoomWave(Math.exp(-clamp(e.deltaY,-100,100)*.01),clamp((e.clientX-rect.left)/rect.width,0,1))}
+ else if(viewSpan<previewData.duration){e.preventDefault();panWave(viewStart+(e.deltaX||e.deltaY)/e.currentTarget.clientWidth*viewSpan)}
+},{passive:false});
 $('strength').addEventListener('input',()=>{$('level').textContent=$('strength').value+'%';drawWave()});window.addEventListener('resize',drawWave);
 async function runStrip(){
  if(running||!bridgeReady)return;

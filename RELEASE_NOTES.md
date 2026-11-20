@@ -1,15 +1,11 @@
-Clear Silence 0.7.1 — wait for Live audio imports before checking boundaries.
+Clear Silence 0.7.2 — clearer waveform and zoom.
 
-Fixes a confirmed sequencing defect in 0.7.0: the bridge set Warp off and immediately validated clip geometry in the same Live event. Live documents Warp changes as deferred. This could reject a valid import using stale duration/marker values, including an original-audio backup in a Take Lane.
+- Removed regions now have a brighter coral fill, diagonal hatching and explicit boundaries. Kept audio stays amber.
+- Minus/plus zoom, Fit (Весь), direct dragging and a full-clip overview navigator. Inspect a window as small as one second, with millisecond time labels.
+- The preview now renders the existing 10 ms analysis peaks at the visible scale instead of stretching the old 550-point overview. Strength changes retain the current view and update the cut regions immediately.
+- Zoom and panning never restrict the batch or change the cleanup settings. Totals always describe the full clip. Loading another clip clears the old view immediately.
+- Groups and Take Lanes behavior is documented: grouped audio tracks are included; existing take clips are left intact; main-lane comp clips are processed normally.
 
-- Return control to Live between import, Warp conversion, full-file marker setup and validation. Never sleep on the Live main thread. Require separate unwarped observations before writing seconds-based markers.
-- Use the generated WAV's exact frame count for the imported audio range. Keep boundary checks and backup-before-delete ordering, and roll back the current clip on an actual mismatch.
-- Accept equivalent paths referring to the same file; do not reject aliases merely because their strings differ.
-- Report the affected stage (Take Lane backup or numbered fragment), property, actual value, expected value and tolerance. Record failures in ~/Library/Logs/ClearSilence/clear-silence.log.
-- Bound pending commands with deadlines; expired queued edits never start. Exceptions/timeouts pass through Undo and close the active transaction.
+Close Clear Silence, install the PKG and open the app. Its interface should show 0.7.2. Updating from 0.7.1 does not require restarting Live: the bridge, protocol 13, audio detector and replacement engine are unchanged. Earlier bridge versions require the usual restart after the app updates the Remote Script.
 
-Close Clear Silence, install the PKG, launch it once to update ClearSilenceBridge, then fully restart both Live and Clear Silence. The interface should show 0.7.1; protocol 13 rejects the old 0.7.0 bridge. The interface design and silence detection settings are unchanged.
-
-Validation: 37 Python tests plus 3 bridge installer tests, including deferred Warp state, early False getters, a conversion that never settles, full-file marker restoration, path aliases, detailed mismatch reporting, transaction rollback and per-event command dispatch. CI also verifies the interface and builds/tests the frozen macOS arm64 app. The reported 0.7.0 error did not identify its failing property, so this release addresses the confirmed sequencing defect without claiming the user's exact failing field has been observed. Actual Live runtime still requires verification.
-
-API reference: https://docs.cycling74.com/apiref/lom/clip/ (warping technical note).
+Validation: Python regression tests, browser checks for zoom, pan, overview, reset, detailed peaks, live strength changes, loading state, unchanged processing scope and compact layout; macOS arm64 build and frozen-app import/signature/package checks. Actual Live runtime is not available on CI. Version 0.7.1's replacement workflow was confirmed working by the user.
