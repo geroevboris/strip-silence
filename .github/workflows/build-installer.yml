@@ -69,12 +69,11 @@ jobs:
           path: ${{ runner.temp }}/clear-silence-ui*.png
 
   pkg-arm64:
-    # The macos-15 arm64 pool has lately cancelled queued jobs without
-    # allocating a runner. Try the distinct, officially supported macOS 26
-    # Apple Silicon pool while keeping the release architecture arm64.
+    # Build on an Apple Silicon runner; use the macOS 15 pool while the
+    # macOS 26 pool is not allocating runners for this release.
     needs: source-tests
     if: needs.source-tests.outputs.published != 'true'
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
