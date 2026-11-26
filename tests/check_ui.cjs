@@ -73,7 +73,7 @@ const root=path.resolve(__dirname,'..');
  await page.locator('#probe').click();await page.waitForFunction(()=>document.getElementById('log').textContent.includes('Готово'));
  check(analyzed.strength===90&&analyzed.track_indices.length===1&&analyzed.track_indices[0]===0,'Viewport changed batch scope or settings');
  for(const width of [420,460]){await page.setViewportSize({width,height:680});const bounds=await page.evaluate(()=>({scroll:document.body.scrollWidth,width:innerWidth,height:document.body.scrollHeight}));if(bounds.scroll>width)throw Error('Horizontal overflow');if(bounds.height>680)throw Error('Vertical overflow: '+bounds.height);console.log({width,bounds});}
- await page.route('**/api/list',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({ok:false,error:'Main, Group and Return Tracks have no arrangement clips'})}));
+ await page.route('**/api/list',route=>{calls.push('/api/list');return route.fulfill({contentType:'application/json',body:JSON.stringify({ok:false,error:'Main, Group and Return Tracks have no arrangement clips'})})});
  await page.locator('.refresh').click();await page.waitForFunction(()=>document.getElementById('status').textContent==='Ошибка чтения проекта');
  check(await page.locator('#probe').isDisabled(),'List failure should disable processing');
  check((await page.locator('#log').innerText()).includes('Group'),'List error details were lost');
