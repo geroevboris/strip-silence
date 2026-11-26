@@ -1,4 +1,4 @@
-# Clear Silence 0.7.2
+# Clear Silence 0.7.3
 
 Компактная утилита удаления тишины из WAV-клипов в Arrangement Ableton Live 12 на macOS Apple Silicon.
 
@@ -6,12 +6,12 @@
 
 ## Установка
 
-1. Закрой прежний Clear Silence и установи PKG из [Releases](https://github.com/geroevboris/strip-silence/releases/tag/v0.7.2-wave-zoom).
-2. Запусти Clear Silence из Applications. При обновлении с 0.7.1 мост не меняется, перезапуск Live не нужен.
-3. При первой установке или переходе с более старой версии приложение обновит Remote Script и попросит полностью перезапустить Ableton. В Settings → Link, Tempo & MIDI → Control Surface должен быть выбран **ClearSilenceBridge**, Input/Output — None.
+1. Закрой прежний Clear Silence и установи PKG из [Releases](https://github.com/geroevboris/strip-silence/releases/tag/v0.7.3-group-tracks).
+2. Запусти Clear Silence из Applications: приложение обновит мост до 0.7.3.
+3. Полностью перезапусти Ableton и Clear Silence, в том числе при обновлении с 0.7.1/0.7.2. В Settings → Link, Tempo & MIDI → Control Surface должен быть выбран **ClearSilenceBridge**, Input/Output — None.
 4. Останови воспроизведение, выбери дорожку / все / нужные дорожки. Настрой очистку по волне и нажми **Убрать тишину**.
 
-В окне должна отображаться версия 0.7.2. Обработка использует проверенный мост 0.7.1 (protocol 13), без изменений импорта и удаления. При ошибке показываются этап, поле, ожидаемое и фактическое значения; журнал находится в `~/Library/Logs/ClearSilence/clear-silence.log`. Мосты до 0.7.1 не допускаются к обработке.
+В окне должна отображаться версия 0.7.3. Мост 0.7.3 (protocol 14) пропускает заголовки групп до чтения клипов; дорожки внутри групп остаются доступны. Импорт и удаление не менялись. При ошибке показываются этап, поле, ожидаемое и фактическое значения; журнал находится в `~/Library/Logs/ClearSilence/clear-silence.log`. Мосты до 0.7.3 не допускаются к обработке.
 
 ## Предпросмотр
 

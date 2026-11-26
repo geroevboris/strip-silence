@@ -16,7 +16,7 @@ from _Framework.ControlSurface import ControlSurface
 HOST = '127.0.0.1'
 PORT = 47861
 TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/bridge_token')
-VERSION = '0.7.1'
+VERSION = '0.7.3'
 
 
 def create_instance(c_instance):
@@ -172,10 +172,16 @@ class ClearSilenceBridge(ControlSurface):
         if action == 'status':
             return {'ok': True, 'version': VERSION, 'tempo': float(song.tempo), 'tracks': len(song.tracks),
                     'can_replace': all(callable(getattr(song, n, None)) for n in ('begin_undo_step','end_undo_step','undo')),
-                    'protocol': 13, 'actions': ['status', 'list', 'preview', 'replace']}
+                    'protocol': 14, 'actions': ['status', 'list', 'preview', 'replace']}
         if action == 'list':
             tracks = []
             for ti, track in enumerate(song.tracks):
+                # Live throws on arrangement_clips for group tracks. Filter
+                # before accessing it; song.tracks already includes children
+                # of collapsed/nested groups, with their original indices.
+                if (bool(getattr(track, 'is_foldable', False))
+                        or not bool(getattr(track, 'has_audio_input', False))):
+                    continue
                 clips = []
                 for ci, clip in enumerate(track.arrangement_clips):
                     if not clip.is_audio_clip:

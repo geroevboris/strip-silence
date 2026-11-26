@@ -13,7 +13,7 @@ const root=path.resolve(__dirname,'..');
    const req=route.request(),url=new URL(req.url());calls.push(url.pathname);
    if(url.pathname==='/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(root,'ui.html'),'utf8')});
    let data={ok:true};
-   if(url.pathname==='/api/status')data={ok:true,protocol:13,can_replace:true,actions:['replace']};
+   if(url.pathname==='/api/status')data={ok:true,protocol:14,can_replace:true,actions:['replace']};
    if(url.pathname==='/api/list')data={ok:true,selected_track_index:0,tracks:[{index:0,name:'Lead vocal',clips:[{index:0,name:'Vocal · Verse 02'}],can_take_lanes:true},{index:1,name:'Double L',clips:[{index:0,name:'Verse 02'}]}]};
    if(url.pathname==='/api/clip/profile')data=profile;
    if(url.pathname==='/api/batch/analyze'){analyzed=req.postDataJSON();if(!analyzed.backup_originals)throw Error('Backup missing');data={ok:true,plan_id:'test',skipped_count:0};}
@@ -73,6 +73,16 @@ const root=path.resolve(__dirname,'..');
  await page.locator('#probe').click();await page.waitForFunction(()=>document.getElementById('log').textContent.includes('Готово'));
  check(analyzed.strength===90&&analyzed.track_indices.length===1&&analyzed.track_indices[0]===0,'Viewport changed batch scope or settings');
  for(const width of [420,460]){await page.setViewportSize({width,height:680});const bounds=await page.evaluate(()=>({scroll:document.body.scrollWidth,width:innerWidth,height:document.body.scrollHeight}));if(bounds.scroll>width)throw Error('Horizontal overflow');if(bounds.height>680)throw Error('Vertical overflow: '+bounds.height);console.log({width,bounds});}
+ await page.route('**/api/list',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({ok:false,error:'Main, Group and Return Tracks have no arrangement clips'})}));
+ await page.locator('.refresh').click();await page.waitForFunction(()=>document.getElementById('status').textContent==='Ошибка чтения проекта');
+ check(await page.locator('#probe').isDisabled(),'List failure should disable processing');
+ check((await page.locator('#log').innerText()).includes('Group'),'List error details were lost');
+ await page.route('**/api/status',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({ok:true,protocol:13,can_replace:true,actions:['replace']})}));
+ const beforeOldList=calls.filter(x=>x==='/api/list').length;
+ await page.locator('.refresh').click();await page.waitForFunction(()=>document.getElementById('status').textContent==='Требуется новый Bridge');
+ check(calls.filter(x=>x==='/api/list').length===beforeOldList,'Old bridge should be rejected before listing groups');
+ await page.route('**/api/status',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({ok:false,error:'Cannot connect to Live bridge'})}));
+ await page.locator('.refresh').click();await page.waitForFunction(()=>document.getElementById('status').textContent==='Live не подключён');
  if(errors.length)throw Error(errors.join('\n'));
  console.log('UI: zoom, pan, overview, reset, detailed peaks, live strength preview, stale loading, batch settings and compact layout passed');
  await browser.close();

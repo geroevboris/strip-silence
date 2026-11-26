@@ -153,6 +153,34 @@ class ReplacementTests(unittest.TestCase):
         return app.jobs['test-batch-123456']
     def assert_source_intact(self): self.assertEqual(self.original,Path(self.path).read_bytes())
 
+    def test_group_headers_are_not_queried_and_child_indices_are_preserved(self):
+        class Group:
+            name='Group'; is_foldable=True; has_audio_input=True; fold_state=True
+            @property
+            def arrangement_clips(self):
+                raise RuntimeError('Main, Group and Return Tracks have no arrangement clips')
+        outer,inner=Group(),Group()
+        first,second=Track([Clip(self.path)]),Track([Clip(self.path)])
+        first.group_track=outer; second.group_track=inner
+        self.song.tracks=[outer,first,inner,second]
+        self.song.view.selected_track=second
+        listing=self.call('list')
+        self.assertEqual([t['index'] for t in listing['tracks']],[1,3])
+        self.assertEqual(listing['selected_track_index'],3)
+        plan=app.plan_batch(dict(track_indices=[3],strength=50,backup_originals=True))
+        self.assertEqual(plan['replace_clips'],1)
+        self.song.view.selected_track=outer
+        self.assertEqual(self.call('list')['selected_track_index'],0)
+
+    def test_non_audio_tracks_do_not_expose_arrangement_clips(self):
+        class NonAudio:
+            is_foldable=False; has_audio_input=False
+            @property
+            def arrangement_clips(self):
+                raise AssertionError('Non-audio track clips should not be queried')
+        self.song.tracks=[NonAudio(),self.song.tracks[0]]
+        self.assertEqual([t['index'] for t in self.call('list')['tracks']],[1])
+
     def test_seven_clips_two_tracks_with_full_backups(self):
         for t,count in [(self.song.tracks[0],4),(Track([]),3)]:
             t.arrangement_clips=[Clip(self.path,360+i*8,364+i*8) for i in range(count)]

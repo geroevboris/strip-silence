@@ -1,8 +1,8 @@
-# Clear Silence 0.7.2
+# Clear Silence 0.7.3
 
 Silence removal for WAV clips in Ableton Live 12 Arrangement on macOS Apple Silicon.
 
-[Инструкция на русском](README_RU.md) · [Download installer](https://github.com/geroevboris/strip-silence/releases/tag/v0.7.2-wave-zoom)
+[Инструкция на русском](README_RU.md) · [Download installer](https://github.com/geroevboris/strip-silence/releases/tag/v0.7.3-group-tracks)
 
 Restores the original rendered-fragment replacement workflow. Kept PCM/float samples are copied without resampling; silent sections disappear from the main lane. Original WAV files are never overwritten. The native keyboard/AX Split + Mute experiment has been removed.
 
@@ -12,9 +12,9 @@ The warm charcoal/orange interface previews kept regions in amber and removed re
 
 Audio tracks inside collapsed/nested groups are included normally. Select their children explicitly to process only that group; selecting a group header in Live is not a group-only scope and may cause the UI to choose All. Existing Take Lane clips are not analyzed or edited; supported comp clips on the main lane are processed normally.
 
-Version 0.7.2 changes only the preview and window height. The 0.7.1 bridge and protocol 13 are unchanged, so updating from 0.7.1 requires closing/reopening Clear Silence but not restarting Live.
+Version 0.7.3 fixes listing projects with grouped tracks: group and non-audio headers are filtered before accessing arrangement_clips; child track indices remain unchanged. Listing failures are distinguished from connection failures. Install and launch the app to update the bridge, then fully restart Live and Clear Silence. Protocol 14 rejects older bridges before querying groups.
 
-Protocol 13 exposes only status, list, preview and replace. Source identity and tempo are rechecked per clip. Each clip's backup and replacement share one Undo step. Import boundaries and neighbours are checked; failure rolls back the current clip and stops the batch. Files live in `~/Music/ClearSilence Output`; use Live's Collect All and Save when moving a Set.
+Protocol 14 exposes only status, list, preview and replace. Source identity and tempo are rechecked per clip. Each clip's backup and replacement share one Undo step. Import boundaries and neighbours are checked; failure rolls back the current clip and stops the batch. Files live in `~/Music/ClearSilence Output`; use Live's Collect All and Save when moving a Set.
 
 Run `python -m unittest discover -s tests -v` and `PYTHONPATH=packaging python -m unittest discover -s packaging/tests -v`. CI additionally tests the UI and builds/verifies the frozen macOS app and PKG. Mock tests do not establish runtime compatibility with the user's Live installation.
 

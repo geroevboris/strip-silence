@@ -21,7 +21,7 @@ TOKEN_FILE = os.path.expanduser('~/Library/Application Support/ClearSilence/brid
 PREVIEW_ROOT = os.path.expanduser('~/Music/ClearSilence Preview')
 OUTPUT_ROOT = os.path.expanduser('~/Music/ClearSilence Output')
 SESSION_TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.7.2'
+APP_VERSION = '0.7.3'
 plans = {}
 batch_plans = {}
 jobs = {}
@@ -59,8 +59,8 @@ def bridge(action, **args):
 def require_replace_bridge():
     """Fail BEFORE creating files or editing Live when the installed script is old."""
     status = bridge('status')
-    if status.get('protocol') != 13 or 'replace' not in status.get('actions', []):
-        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.7.1.' % status.get('version', 'неизвестен'))
+    if status.get('protocol') != 14 or 'replace' not in status.get('actions', []):
+        raise RuntimeError('В Ableton запущен старый ClearSilenceBridge. Установи новую версию Clear Silence и полностью перезапусти Ableton. Текущий мост: %s, нужен v0.7.3.' % status.get('version', 'неизвестен'))
     if not status.get('can_replace', False):
         raise RuntimeError('Live не предоставил безопасные операции Undo. Замена клипов отключена.')
     return status
